@@ -2165,7 +2165,7 @@ function buildModeloSheet(wb, funcs, empresa, competencia) {
     byDepto[d].push(f);
   });
 
-  const COLS = 22;
+  const COLS = 24;
   const rows = [], metas = [];
   const R = (data, m) => { rows.push(data); metas.push(m||'data'); };
 
@@ -2181,22 +2181,21 @@ function buildModeloSheet(wb, funcs, empresa, competencia) {
 
   // Seções
   R(['','','','','','',
-     '━━ PROVENTOS ━━','','','','',
-     '━━ DESCONTOS ━━','','',
-     '━━ TOTAIS ━━','','',
-     '━━ BENEFÍCIOS ━━','','',
-     '━━ PROVISÕES ━━',''
+     '━━━ TOTAIS DA FOLHA ━━━','','','',
+     '━━━ DESCONTOS ━━━','','',
+     '━━━ BENEFÍCIOS (COMPRA) ━━━','','','','','',
+     '━━━ PROVISÕES GERENCIAIS ━━━','','','',''
   ], 'section');
 
   R([
     'DEPTO','CARGO','FUNCIONÁRIO','CPF','SITUAÇÃO','VÍNCULO',
-    'SALÁRIO\nCONTRATUAL','VR','VA','VT','AM / AO','PREMIAÇÃO',
+    'SALÁRIO\nCONTRATUAL','PROVENTOS','DESCONTOS','LÍQUIDO',
     'INSS\nDESCONTO','VT 6%','ADIANT.',
-    'PROVENTOS','DESCONTOS','LÍQUIDO',
-    'FGTS','BENEFÍCIOS','ENC.\nPATRONAL','CUSTO\nTOTAL'
+    'VT\n(compra)','VR\n(compra)','VA\n(compra)','AM\n(compra)','AO\n(compra)','TOTAL\nBENEFÍCIOS',
+    'FGTS','ENC.\nPATRONAL','PROV.\n13º','PROV.\nFÉRIAS','CUSTO\nTOTAL'
   ], 'header');
 
-  const GT = {sal:0,vr:0,va:0,vt:0,am:0,prov:0,inss:0,vt6:0,adnt:0,desc:0,liq:0,fgts:0,ben:0,enc:0,custo:0};
+  const GT = {sal:0,prov:0,desc:0,liq:0,inss:0,vt6:0,adnt:0,vt:0,vr:0,va:0,am:0,ao:0,ben:0,fgts:0,enc:0,p13:0,fer:0,custo:0};
 
   Object.entries(byDepto).sort().forEach(([depto, df]) => {
     // Dept separator
@@ -2204,7 +2203,7 @@ function buildModeloSheet(wb, funcs, empresa, competencia) {
     for (let i=1;i<COLS;i++) dRow.push('');
     R(dRow, 'dept');
 
-    const DT = {sal:0,vr:0,va:0,vt:0,am:0,prov:0,inss:0,vt6:0,adnt:0,desc:0,liq:0,fgts:0,ben:0,enc:0,custo:0};
+    const DT = {sal:0,prov:0,desc:0,liq:0,inss:0,vt6:0,adnt:0,vt:0,vr:0,va:0,am:0,ao:0,ben:0,fgts:0,enc:0,p13:0,fer:0,custo:0};
 
     df.forEach((f, fi) => {
       const sal   = n2(f.salario);
@@ -2224,48 +2223,63 @@ function buildModeloSheet(wb, funcs, empresa, competencia) {
       const fgtsV = n2(sal*fgtsP);
       const custo = n2(prov+enc+p13+fer+terco+fgtsV);
 
+      // Benefícios do CADASTRO do funcionário (atualizados pela importação de rubricas)
+      const funcCad = DB.funcionarios.find(x =>
+        (x.cpf && f.cpf && x.cpf === f.cpf) || normalize(x.nome) === normalize(f.nome)
+      ) || f;
+      const vtC = n2(funcCad.vt||0);
+      const vrC = n2(funcCad.vr||0);
+      const vaC = n2(funcCad.va||0);
+      const amC = n2(funcCad.am||0);
+      const aoC = n2(funcCad.ao||0);
+      const benC = vtC + vrC + vaC + amC + aoC;
+      const p13 = n2(sal * p13P);
+      const fer = n2(sal * ferP);
+      const custoTotal = n2(prov + enc + p13 + fer + n2(sal * tercoP) + n2(sal * fgtsP));
+
       R([
         depto, f.cargo||'-', f.nome, f.cpf||'-', f.situacao, f.vinculo,
-        brl(sal), brl(vr)||null, brl(va)||null, brl(vt)||null, brl(am)||null, null,
+        brl(sal), brl(prov), brl(desc), brl(liq),
         brl(inss)||null, brl(vt6)||null, brl(adnt)||null,
-        brl(prov), brl(desc), brl(liq),
-        brl(fgts)||null, brl(ben)||null, brl(enc), brl(custo)
+        vtC||null, vrC||null, vaC||null, amC||null, aoC||null, benC||null,
+        brl(fgts)||null, brl(enc), brl(p13), brl(fer), brl(custoTotal)
       ], 'row:'+(fi%2===0?EQ.TEAL_XLT:EQ.WHITE)+(f.vinculo==='Estagiário'?':EST':f.vinculo==='Diretor'?':DIR':f.situacao==='Demitido'?':DEM':''));
 
-      DT.sal+=sal;DT.vr+=vr;DT.va+=va;DT.vt+=vt;DT.am+=am;
-      DT.prov+=prov;DT.inss+=inss;DT.vt6+=vt6;DT.adnt+=adnt;DT.desc+=desc;DT.liq+=liq;
-      DT.fgts+=fgts;DT.ben+=ben;DT.enc+=enc;DT.custo+=custo;
+      DT.sal+=sal;DT.prov+=prov;DT.desc+=desc;DT.liq+=liq;
+      DT.inss+=inss;DT.vt6+=vt6;DT.adnt+=adnt;
+      DT.vt+=vtC;DT.vr+=vrC;DT.va+=vaC;DT.am+=amC;DT.ao+=aoC;DT.ben+=benC;
+      DT.fgts+=fgts;DT.enc+=enc;DT.p13=(DT.p13||0)+p13;DT.fer=(DT.fer||0)+fer;DT.custo+=custoTotal;
     });
 
     // Subtotal depto
     R([
       '','SUBTOTAL '+depto,'','','','',
-      brl(DT.sal), brl(DT.vr)||null, brl(DT.va)||null, brl(DT.vt)||null, brl(DT.am)||null, null,
+      brl(DT.sal), brl(DT.prov), brl(DT.desc), brl(DT.liq),
       brl(DT.inss)||null, brl(DT.vt6)||null, brl(DT.adnt)||null,
-      brl(DT.prov), brl(DT.desc), brl(DT.liq),
-      brl(DT.fgts)||null, brl(DT.ben)||null, brl(DT.enc), brl(DT.custo)
+      DT.vt||null, DT.vr||null, DT.va||null, DT.am||null, DT.ao||null, DT.ben||null,
+      brl(DT.fgts)||null, brl(DT.enc), brl(DT.p13)||null, brl(DT.fer)||null, brl(DT.custo)
     ], 'subtotal');
     R([], 'space');
 
-    Object.keys(GT).forEach(k => GT[k] += DT[k]);
+    Object.keys(GT).forEach(k => { if (k in DT) GT[k] += DT[k]||0; });
   });
 
   R([], 'space');
   R([
     '','TOTAL GERAL — '+funcs.length+' FUNCIONÁRIOS','','','','',
-    brl(GT.sal), brl(GT.vr)||null, brl(GT.va)||null, brl(GT.vt)||null, brl(GT.am)||null, null,
+    brl(GT.sal), brl(GT.prov), brl(GT.desc), brl(GT.liq),
     brl(GT.inss)||null, brl(GT.vt6)||null, brl(GT.adnt)||null,
-    brl(GT.prov), brl(GT.desc), brl(GT.liq),
-    brl(GT.fgts)||null, brl(GT.ben)||null, brl(GT.enc), brl(GT.custo)
+    GT.vt||null, GT.vr||null, GT.va||null, GT.am||null, GT.ao||null, GT.ben||null,
+    brl(GT.fgts)||null, brl(GT.enc), brl(GT.p13)||null, brl(GT.fer)||null, brl(GT.custo)
   ], 'grandtotal');
 
   const ws = XLSX.utils.aoa_to_sheet(rows);
   ws['!cols'] = [
-    {wch:18},{wch:26},{wch:34},{wch:15},{wch:12},{wch:18},
-    {wch:13},{wch:11},{wch:11},{wch:11},{wch:11},{wch:10},
+    {wch:18},{wch:24},{wch:32},{wch:15},{wch:12},{wch:18},
+    {wch:13},{wch:13},{wch:12},{wch:13},
     {wch:11},{wch:10},{wch:11},
-    {wch:13},{wch:12},{wch:13},
-    {wch:11},{wch:12},{wch:12},{wch:13}
+    {wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:14},
+    {wch:11},{wch:12},{wch:11},{wch:11},{wch:14}
   ];
   ws['!rows'] = rows.map((_,i)=>{
     const m=metas[i];
@@ -2280,25 +2294,24 @@ function buildModeloSheet(wb, funcs, empresa, competencia) {
     {s:{r:1,c:0},e:{r:1,c:2}},{s:{r:1,c:3},e:{r:1,c:5}},
     {s:{r:1,c:6},e:{r:1,c:9}},{s:{r:1,c:10},e:{r:1,c:12}},
     {s:{r:1,c:13},e:{r:1,c:21}},
-    {s:{r:3,c:6},e:{r:3,c:11}},
-    {s:{r:3,c:12},e:{r:3,c:14}},
-    {s:{r:3,c:15},e:{r:3,c:17}},
-    {s:{r:3,c:18},e:{r:3,c:19}},
-    {s:{r:3,c:20},e:{r:3,c:21}},
+    {s:{r:3,c:6},e:{r:3,c:9}},
+    {s:{r:3,c:10},e:{r:3,c:12}},
+    {s:{r:3,c:13},e:{r:3,c:18}},
+    {s:{r:3,c:19},e:{r:3,c:23}},
   ];
   rows.forEach((row,ri)=>{
     const m=metas[ri];
-    if (m==='dept'||m==='grandtotal') merges.push({s:{r:ri,c:0},e:{r:ri,c:21}});
-    if (m==='subtotal') merges.push({s:{r:ri,c:0},e:{r:ri,c:5}});
+    if (m==='dept'||m==='grandtotal') merges.push({s:{r:ri,c:0},e:{r:ri,c:23}});
+    if (m==='subtotal') merges.push({s:{r:ri,c:0},e:{r:ri,c:5}}); // subtotal label
   });
   ws['!merges'] = merges;
 
   // Seções de colunas
-  const PROV  = new Set([6,7,8,9,10,11]);
-  const DESCC = new Set([12,13,14]);
-  const TOTC  = new Set([15,16,17]);
-  const BENC  = new Set([18,19]);
-  const PROVC = new Set([20,21]);
+  const TOTC  = new Set([6,7,8,9]);
+  const DESCC = new Set([10,11,12]);
+  const BENC  = new Set([13,14,15,16,17,18]);
+  const PROVC = new Set([19,20,21,22,23]);
+  const PROV  = new Set(); // não usado mais
 
   const getSecBg = ci =>
     PROV.has(ci)?EQ.TEAL_DK:DESCC.has(ci)?'B91C1C':TOTC.has(ci)?EQ.SLATE:
@@ -2336,7 +2349,7 @@ function buildModeloSheet(wb, funcs, empresa, competencia) {
         if (flag==='EST') bg='FFFBEB';
         else if (flag==='DIR') bg='F5F3FF';
         else if (flag==='DEM') bg='FFF0F0';
-        const isName=ci===2; const isLiq=ci===17; const isCusto=ci===21; const isTot=TOTC.has(ci);
+        const isName=ci===2; const isLiq=ci===9; const isCusto=ci===23; const isTot=TOTC.has(ci);
         cell.s=EQ.hair(bg,
           isName?EQ.TEAL_DK:isCusto?EQ.TOTAL:isLiq?EQ.PROV_H:EQ.SLATE_DK,
           isNum?'right':(ci<=1?'center':'left'),
@@ -3453,58 +3466,115 @@ function rubricaLog(msg, type) {
 }
 
 function parseRubricas(data) {
-  // Encontrar linha de cabeçalho
+  const parseVal = v => {
+    if (!v && v !== 0) return 0;
+    const n = parseFloat(String(v).replace(',','.'));
+    return isNaN(n) ? 0 : n;
+  };
+
+  // ── Detectar modelo da planilha ──────────────────────────────────
+  // Modelo Equilibrym: NOME | Departamento | VT | VR | COMBUSTIVEL | AO | AM
+  // Modelo antigo:     ...  | CPF | NOME | ...
   let headerRow = -1;
-  for (let i = 0; i < Math.min(data.length, 15); i++) {
-    const row = (data[i] || []).join(' ');
-    if (/Colaboradores|Nome dos|CPF|NOME/i.test(row)) { headerRow = i + 1; break; }
+  let colMap = null; // mapeamento de colunas
+
+  for (let i = 0; i < Math.min(data.length, 20); i++) {
+    const row = (data[i] || []).map(c => String(c||'').trim().toUpperCase());
+    // Detectar cabeçalho pelo conteúdo das células
+    if (row.some(c => c === 'NOME') || row.some(c => c === 'NOME COMPLETO')) {
+      headerRow = i;
+      // Mapear colunas dinamicamente
+      colMap = {
+        nome:        row.findIndex(c => c === 'NOME' || c === 'NOME COMPLETO'),
+        departamento:row.findIndex(c => c === 'DEPARTAMENTO' || c === 'DEPTO'),
+        cpf:         row.findIndex(c => c === 'CPF'),
+        vt:          row.findIndex(c => c === 'VT' || c === 'VALE TRANSPORTE'),
+        vr:          row.findIndex(c => c === 'VR' || c === 'VALE REFEIÇÃO' || c === 'VALE REFEICAO'),
+        combustivel: row.findIndex(c => c === 'COMBUSTIVEL' || c === 'COMBUSTÍVEL'),
+        ao:          row.findIndex(c => c === 'AO' || c === 'ASSIST. ODONTOLOGICA' || c === 'ODONTOLOGICO'),
+        am:          row.findIndex(c => c === 'AM' || c === 'ASSIST. MEDICA' || c === 'ASSIST MEDICA' || c === 'PLANO DE SAUDE'),
+        va:          row.findIndex(c => c === 'VA' || c === 'VALE ALIMENTAÇÃO' || c === 'VALE ALIMENTACAO'),
+      };
+      break;
+    }
   }
-  if (headerRow < 0) { headerRow = 10; rubricaLog('⚠️ Cabeçalho não encontrado, usando linha 10', 'warn'); }
-  rubricaLog('📍 Dados a partir da linha ' + (headerRow + 1));
+
+  if (headerRow < 0 || !colMap) {
+    rubricaLog('⚠️ Cabeçalho não reconhecido. Tentando leitura padrão...', 'warn');
+    // Fallback: modelo antigo (linha 0 é cabeçalho, col 0=nome)
+    headerRow = 0;
+    colMap = { nome:0, departamento:1, cpf:-1, vt:2, vr:3, combustivel:4, ao:5, am:6, va:-1 };
+  }
+
+  rubricaLog('📍 Cabeçalho na linha ' + (headerRow + 1));
+  rubricaLog('🗂️ Colunas: NOME=' + colMap.nome + ' VT=' + colMap.vt + ' VR=' + colMap.vr + ' AM=' + colMap.am + ' AO=' + colMap.ao);
 
   const results = [];
-  const parseVal = v => { if (!v && v !== 0) return 0; const n = parseFloat(String(v).replace(',','.')); return isNaN(n) ? 0 : n; };
 
-  for (let i = headerRow; i < data.length; i++) {
+  for (let i = headerRow + 1; i < data.length; i++) {
     const row = data[i];
-    if (!row || row.length < 3) continue;
-    const nome = String(row[2] || '').trim();
-    const cpf  = String(row[3] || '').trim();
-    if (!nome || nome.length < 3) continue;
+    if (!row || !row.length) continue;
 
-    results.push({
-      nome: nome.toUpperCase(), cpf,
-      codigo: String(row[1] || '').trim(),
-      vt:         parseVal(row[4]),
-      combustivel: parseVal(row[5]),
-      vr:         parseVal(row[6]),
-      va:         parseVal(row[7]),
-      am:         parseVal(row[8]),
-      ao:         parseVal(row[9])
-    });
+    const nome = String(row[colMap.nome] || '').trim().toUpperCase();
+    if (!nome || nome.length < 3) continue;
+    if (nome === 'TOTAL' || nome === 'SUBTOTAL') continue; // pular linha de totais
+
+    const r = {
+      nome,
+      departamento: colMap.departamento >= 0 ? String(row[colMap.departamento] || '').trim().toUpperCase() : '',
+      cpf:          colMap.cpf >= 0 ? String(row[colMap.cpf] || '').trim() : '',
+      vt:           colMap.vt >= 0 ? parseVal(row[colMap.vt]) : 0,
+      vr:           colMap.vr >= 0 ? parseVal(row[colMap.vr]) : 0,
+      combustivel:  colMap.combustivel >= 0 ? parseVal(row[colMap.combustivel]) : 0,
+      ao:           colMap.ao >= 0 ? parseVal(row[colMap.ao]) : 0,
+      am:           colMap.am >= 0 ? parseVal(row[colMap.am]) : 0,
+      va:           colMap.va >= 0 ? parseVal(row[colMap.va]) : 0,
+    };
+
+    // VT pode vir de combustível quando VT está vazio
+    if (!r.vt && r.combustivel) r.vt = r.combustivel;
+
+    results.push(r);
   }
 
   rubricaLog('✅ ' + results.length + ' colaboradores encontrados');
   rubricaParsed = results;
 
-  // Preview
+  // ── Preview ──────────────────────────────────────────────────────
   const card = document.getElementById('card-rubrica-preview');
   if (card) card.style.display = '';
   const container = document.getElementById('rubrica-preview-content');
   if (container) {
+    const totVT = results.reduce((s,r) => s + r.vt, 0);
+    const totVR = results.reduce((s,r) => s + r.vr, 0);
+    const totAM = results.reduce((s,r) => s + r.am, 0);
+    const totAO = results.reduce((s,r) => s + r.ao, 0);
+    const totVA = results.reduce((s,r) => s + r.va, 0);
     container.innerHTML = `
+      <div style="margin-bottom:10px;padding:8px 12px;background:var(--teal-lt);border-radius:7px;font-size:.8rem;display:flex;gap:16px;flex-wrap:wrap">
+        <span>👥 <strong>${results.length}</strong> colaboradores</span>
+        <span>🚌 VT: <strong>${fmtBRL(totVT)}</strong></span>
+        <span>🍽️ VR: <strong>${fmtBRL(totVR)}</strong></span>
+        <span>🏥 AM: <strong>${fmtBRL(totAM)}</strong></span>
+        <span>🦷 AO: <strong>${fmtBRL(totAO)}</strong></span>
+        ${totVA > 0 ? '<span>🛒 VA: <strong>' + fmtBRL(totVA) + '</strong></span>' : ''}
+      </div>
       <table>
-        <thead><tr><th>Nome</th><th>CPF</th><th class="td-num">VT</th><th class="td-num">VR</th><th class="td-num">VA</th><th class="td-num">AM</th><th class="td-num">AO</th></tr></thead>
+        <thead><tr><th>Nome</th><th>Departamento</th><th class="td-num">VT</th><th class="td-num">VR</th><th class="td-num">VA</th><th class="td-num">AM</th><th class="td-num">AO</th><th class="td-num">Total</th></tr></thead>
         <tbody>
-          ${results.map(r => `<tr>
-            <td class="text-bold">${r.nome}</td>
-            <td style="color:var(--muted);font-size:.78rem">${r.cpf}</td>
-            <td class="td-num">${fmtBRL(r.vt)}</td>
-            <td class="td-num">${fmtBRL(r.vr)}</td>
-            <td class="td-num">${fmtBRL(r.va)}</td>
-            <td class="td-num">${fmtBRL(r.am)}</td>
-            <td class="td-num">${fmtBRL(r.ao)}</td>
-          </tr>`).join('')}
+          ${results.map(r => {
+            const tot = r.vt + r.vr + r.va + r.am + r.ao;
+            return '<tr>' +
+              '<td class="text-bold">' + r.nome + '</td>' +
+              '<td style="color:var(--muted);font-size:.78rem">' + (r.departamento || '-') + '</td>' +
+              '<td class="td-num">' + (r.vt ? fmtBRL(r.vt) : '-') + '</td>' +
+              '<td class="td-num">' + (r.vr ? fmtBRL(r.vr) : '-') + '</td>' +
+              '<td class="td-num">' + (r.va ? fmtBRL(r.va) : '-') + '</td>' +
+              '<td class="td-num">' + (r.am ? fmtBRL(r.am) : '-') + '</td>' +
+              '<td class="td-num">' + (r.ao ? fmtBRL(r.ao) : '-') + '</td>' +
+              '<td class="td-num" style="font-weight:700;color:var(--total)">' + fmtBRL(tot) + '</td>' +
+              '</tr>';
+          }).join('')}
         </tbody>
       </table>`;
   }
@@ -3514,26 +3584,37 @@ function confirmRubricaImport() {
   if (!rubricaParsed) { toast('Nenhuma rubrica carregada', 'err'); return; }
   let vinculados = 0, naoEncontrados = 0;
 
+  const naoVinculados = [];
   rubricaParsed.forEach(r => {
-    let func = DB.funcionarios.find(f => f.cpf && f.cpf.replace(/\D/g,'') === r.cpf.replace(/\D/g,''));
+    // 1) Tenta por CPF
+    let func = r.cpf ? DB.funcionarios.find(f => f.cpf && f.cpf.replace(/\D/g,'') === r.cpf.replace(/\D/g,'')) : null;
+    // 2) Tenta por nome exato normalizado
     if (!func) func = DB.funcionarios.find(f => normalize(f.nome) === normalize(r.nome));
+    // 3) Tenta por nome parcial (contém)
+    if (!func) {
+      const normR = normalize(r.nome);
+      func = DB.funcionarios.find(f => normalize(f.nome).includes(normR) || normR.includes(normalize(f.nome)));
+    }
 
     if (func) {
       const idx = DB.funcionarios.findIndex(f => f.id === func.id);
       DB.funcionarios[idx] = {
         ...func,
-        vt: r.vt || r.combustivel || func.vt || 0,
-        vr: r.vr || func.vr || 0,
-        va: r.va || func.va || 0,
-        am: r.am || func.am || 0,
-        ao: r.ao || func.ao || 0
+        vt: r.vt !== undefined ? r.vt : func.vt || 0,
+        vr: r.vr !== undefined ? r.vr : func.vr || 0,
+        va: r.va !== undefined ? r.va : func.va || 0,
+        am: r.am !== undefined ? r.am : func.am || 0,
+        ao: r.ao !== undefined ? r.ao : func.ao || 0,
       };
       vinculados++;
     } else {
-      rubricaLog('⚠️ Não encontrado: ' + r.nome, 'warn');
+      naoVinculados.push(r.nome);
       naoEncontrados++;
     }
   });
+  if (naoVinculados.length) {
+    naoVinculados.forEach(n => rubricaLog('⚠️ Não encontrado: ' + n, 'warn'));
+  }
 
   // Salvar no histórico
   const empIdR = document.getElementById('rubrica-empresa-sel').value;
