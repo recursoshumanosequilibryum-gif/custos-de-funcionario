@@ -2233,22 +2233,22 @@ function buildModeloSheet(wb, funcs, empresa, competencia) {
       const amC = n2(funcCad.am||0);
       const aoC = n2(funcCad.ao||0);
       const benC = vtC + vrC + vaC + amC + aoC;
-      const p13 = n2(sal * p13P);
-      const fer = n2(sal * ferP);
-      const custoTotal = n2(prov + enc + p13 + fer + n2(sal * tercoP) + n2(sal * fgtsP));
+      const prov13 = n2(sal * p13P);
+      const provFer = n2(sal * ferP);
+      const custoTotal = n2(prov + enc + prov13 + provFer + n2(sal * tercoP) + n2(sal * fgtsP));
 
       R([
         depto, f.cargo||'-', f.nome, f.cpf||'-', f.situacao, f.vinculo,
         brl(sal), brl(prov), brl(desc), brl(liq),
         brl(inss)||null, brl(vt6)||null, brl(adnt)||null,
         vtC||null, vrC||null, vaC||null, amC||null, aoC||null, benC||null,
-        brl(fgts)||null, brl(enc), brl(p13), brl(fer), brl(custoTotal)
+        brl(fgts)||null, brl(enc), brl(prov13), brl(provFer), brl(custoTotal)
       ], 'row:'+(fi%2===0?EQ.TEAL_XLT:EQ.WHITE)+(f.vinculo==='Estagiário'?':EST':f.vinculo==='Diretor'?':DIR':f.situacao==='Demitido'?':DEM':''));
 
       DT.sal+=sal;DT.prov+=prov;DT.desc+=desc;DT.liq+=liq;
       DT.inss+=inss;DT.vt6+=vt6;DT.adnt+=adnt;
       DT.vt+=vtC;DT.vr+=vrC;DT.va+=vaC;DT.am+=amC;DT.ao+=aoC;DT.ben+=benC;
-      DT.fgts+=fgts;DT.enc+=enc;DT.p13=(DT.p13||0)+p13;DT.fer=(DT.fer||0)+fer;DT.custo+=custoTotal;
+      DT.fgts+=fgts;DT.enc+=enc;DT.p13=(DT.p13||0)+prov13;DT.fer=(DT.fer||0)+provFer;DT.custo+=custoTotal;
     });
 
     // Subtotal depto
