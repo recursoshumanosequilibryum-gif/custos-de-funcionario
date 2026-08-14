@@ -603,6 +603,7 @@
             <option value="anual">📅 Relatório Anual de Custos</option>
             <option value="modelo">📋 Modelo Gerencial (do banco de dados)</option>
             <option value="resumo">📊 Resumo por Departamento</option>
+            <option value="afastamentos">🏥 Relatório de Afastamentos por Período</option>
           </select>
         </div>
       </div>
@@ -2434,6 +2435,377 @@ function buildResumoSheet(wb, funcs, empresa, competencia) {
 }
 
 
+
+
+// ═══════════════════════════════════════════════════════
+// RELATÓRIO DE AFASTAMENTOS
+// ═══════════════════════════════════════════════════════
+function buildAfastamentosSheet(wb, folhas, empresa) {
+  const hoje = new Date().toLocaleDateString('pt-BR');
+
+  // Paleta
+  const C = {
+    TEAL_DK:'2C7A72', TEAL_MD:'3D9E96', TEAL_LT:'E8F5F4', TEAL_XLT:'F4FAFA',
+    SLATE:'4A5A72', SLATE_LT:'EEF1F5', WHITE:'FFFFFF', TEXT:'2D3748',
+    TOTAL:'1A4A45', WARN_LT:'FFFBEB', WARN:'744210',
+    DOENC_BG:'FFF0F0', DOENC_H:'991B1B',
+    BOLSA_BG:'EBF8FF', BOLSA_H:'2B6CB0',
+    TOTAL_BG:'1A4A45'
+  };
+
+  const brd = (style, color) => ({
+    top:{style,color:{rgb:color}}, bottom:{style,color:{rgb:color}},
+    left:{style,color:{rgb:color}}, right:{style,color:{rgb:color}}
+  });
+
+  const sty = (bold, bg, fg, align, sz, wrap) => ({
+    font: {bold:!!bold, color:{rgb:fg||'FFFFFF'}, sz:sz||9, name:'Calibri'},
+    fill: {fgColor:{rgb:bg||C.TEAL_DK}, patternType:'solid'},
+    alignment: {horizontal:align||'center', vertical:'center', wrapText:!!wrap},
+    border: brd('thin','CBD5E0')
+  });
+
+  const hair = (bg, fg, align, bold, sz) => ({
+    font: {bold:!!bold, color:{rgb:fg||C.TEXT}, sz:sz||9, name:'Calibri'},
+    fill: {fgColor:{rgb:bg||C.WHITE}, patternType:'solid'},
+    alignment: {horizontal:align||'left', vertical:'center'},
+    border: brd('hair','D1DDE6')
+  });
+
+  // ── Coletar dados de afastamento de todas as folhas ──────────────
+  const registros = []; // {competencia, empresa, nome, cpf, cargo, vinculo, depto, tipo, dias, valor, periodo}
+
+  const CODES_DOENCA = ['8870'];  // DIAS AFAST. DOENCA C/DIR.INTEGRAIS
+  const CODES_BOLSA  = ['8813'];  // BOLSA AUX DIAS AFASTAMENTO DIREITOS INT
+
+  folhas.sort((a,b) => (a.competencia||'').localeCompare(b.competencia||'')).forEach(folha => {
+    const comp = folha.competencia || '';
+    const empNome = folha.empresaNome || '';
+
+    (folha.funcionarios || []).forEach(f => {
+      const rubricas = f.rubricas_detalhe || [];
+
+      // Buscar 8870 - Doença
+      rubricas.filter(r => CODES_DOENCA.includes(r.code)).forEach(r => {
+        registros.push({
+          competencia: comp, empresa: empNome,
+          nome: f.nome, cpf: f.cpf||'', cargo: f.cargo||'',
+          vinculo: f.vinculo||'', depto: f.departamento||'',
+          tipo: 'DIAS AFAST. DOENÇA', codigo: '8870',
+          dias: parseFloat(String(r.qty||'0').replace(',','.')) || 0,
+          valor: r.val || 0,
+          periodo: '' // extraído abaixo
+        });
+      });
+
+      // Buscar 8813 - Bolsa Aux Afastamento
+      rubricas.filter(r => CODES_BOLSA.includes(r.code)).forEach(r => {
+        registros.push({
+          competencia: comp, empresa: empNome,
+          nome: f.nome, cpf: f.cpf||'', cargo: f.cargo||'',
+          vinculo: f.vinculo||'', depto: f.departamento||'',
+          tipo: 'BOLSA AUX AFASTAMENTO', codigo: '8813',
+          dias: parseFloat(String(r.qty||'0').replace(',','.')) || 0,
+          valor: r.val || 0,
+          periodo: ''
+        });
+      });
+    });
+  });
+
+  // ── ABA 1 — DETALHADO POR FUNCIONÁRIO ───────────────────────────
+  const rows1 = [], meta1 = [];
+  const R1 = (d,m) => { rows1.push(d); meta1.push(m); };
+
+  R1(['EQUILIBRYM — RELATÓRIO DE AFASTAMENTOS POR PERÍODO'], 'title');
+  R1(['Empresa: '+(empresa?.razao||'TODAS AS EMPRESAS')+'  |  CNPJ: '+(empresa?.cnpj||'')+'  |  Gerado em: '+hoje+'  |  Total de registros: '+registros.length], 'subtitle');
+  R1([], 'space');
+
+  // Agrupar por competência
+  const porComp = {};
+  registros.forEach(r => {
+    if (!porComp[r.competencia]) porComp[r.competencia] = [];
+    porComp[r.competencia].push(r);
+  });
+
+  if (!registros.length) {
+    R1(['Nenhum afastamento encontrado nas folhas importadas.'], 'empty');
+  }
+
+  let totalDias8870 = 0, totalVal8870 = 0;
+  let totalDias8813 = 0, totalVal8813 = 0;
+
+  Object.keys(porComp).sort().forEach(comp => {
+    const regs = porComp[comp];
+    const [ano, mes] = comp.split('-');
+    const mesesNomes = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    const mesNome = mesesNomes[(parseInt(mes)||1)-1] + '/' + ano;
+
+    // Cabeçalho do mês
+    R1(['📅 COMPETÊNCIA: ' + mesNome + '  —  ' + regs.length + ' afastamento(s)'], 'mes');
+
+    // Headers
+    R1(['TIPO DE AFASTAMENTO','CÓD.','EMPRESA','DEPARTAMENTO','FUNCIONÁRIO','CPF','CARGO','VÍNCULO','DIAS','VALOR (R$)'], 'header');
+
+    let totDiasComp = 0, totValComp = 0;
+    regs.forEach((r, ri) => {
+      const isDoenca = r.codigo === '8870';
+      const bg = isDoenca
+        ? (ri%2===0 ? C.DOENC_BG : 'FFF5F5')
+        : (ri%2===0 ? C.BOLSA_BG : 'EDF8FF');
+      R1([
+        r.tipo, r.codigo, r.empresa, r.depto,
+        r.nome, r.cpf, r.cargo, r.vinculo,
+        r.dias||'-', r.valor||null
+      ], 'row:'+bg+':'+(r.codigo==='8870'?'D':'B'));
+      totDiasComp += r.dias||0;
+      totValComp  += r.valor||0;
+
+      if (r.codigo === '8870') { totalDias8870 += r.dias||0; totalVal8870 += r.valor||0; }
+      else                     { totalDias8813 += r.dias||0; totalVal8813 += r.valor||0; }
+    });
+
+    // Subtotal competência
+    R1(['','SUBTOTAL '+mesNome,'','','','','','',totDiasComp||null,totValComp||null], 'subtotal');
+    R1([], 'space');
+  });
+
+  // Total geral
+  R1([], 'space');
+  R1(['','TOTAL GERAL','','','','','','',totalDias8870+totalDias8813||null,totalVal8870+totalVal8813||null], 'grandtotal');
+
+  const ws1 = XLSX.utils.aoa_to_sheet(rows1);
+  ws1['!cols'] = [{wch:28},{wch:7},{wch:24},{wch:18},{wch:34},{wch:16},{wch:26},{wch:18},{wch:8},{wch:14}];
+  ws1['!rows'] = rows1.map((_,i) => {
+    const m = meta1[i];
+    return m==='title'?{hpt:28}:m==='subtitle'?{hpt:16}:m==='mes'?{hpt:20}:
+           m==='header'?{hpt:22}:m==='subtotal'?{hpt:18}:m==='grandtotal'?{hpt:22}:
+           m==='space'?{hpt:5}:m==='empty'?{hpt:30}:{hpt:15};
+  });
+  ws1['!merges'] = [
+    {s:{r:0,c:0},e:{r:0,c:9}},
+    {s:{r:1,c:0},e:{r:1,c:9}},
+  ];
+  rows1.forEach((_,ri) => {
+    const m = meta1[ri];
+    if (m==='mes'||m==='grandtotal'||m==='empty') {
+      ws1['!merges'].push({s:{r:ri,c:0},e:{r:ri,c:9}});
+    }
+    if (m==='subtotal') {
+      ws1['!merges'].push({s:{r:ri,c:0},e:{r:ri,c:7}});
+    }
+  });
+
+  // Apply styles
+  rows1.forEach((row, ri) => {
+    const m = meta1[ri];
+    if (m==='space') return;
+    row.forEach((_, ci) => {
+      const addr = XLSX.utils.encode_cell({r:ri, c:ci});
+      if (!ws1[addr]) ws1[addr] = {t:'s', v:''};
+      const cell = ws1[addr]; const val = cell.v;
+      const isNum = ci >= 8;
+      const isDoenca = m && m.includes(':D');
+      const isBolsa  = m && m.includes(':B');
+
+      if (m==='title') {
+        cell.s = sty(true, C.TEAL_DK, 'FFFFFF', 'left', 14);
+      } else if (m==='subtitle') {
+        cell.s = sty(false, C.TEAL_LT, C.TEAL_DK, 'left', 9);
+      } else if (m==='mes') {
+        cell.s = sty(true, C.TEAL_MD, 'FFFFFF', 'left', 11);
+      } else if (m==='header') {
+        cell.s = sty(true, C.SLATE, 'FFFFFF', 'center', 8.5, true);
+      } else if (m==='empty') {
+        cell.s = sty(false, C.WARN_LT, C.WARN, 'center', 10);
+      } else if (m==='subtotal') {
+        cell.s = sty(true, C.SLATE, 'FFFFFF', isNum?'right':'left', 9);
+        if (isNum && val) cell.s.numFmt = 'R$ #,##0.00';
+      } else if (m==='grandtotal') {
+        cell.s = sty(true, C.TOTAL_BG, 'FFFFFF', isNum?'right':'left', 11);
+        if (isNum && val) cell.s.numFmt = 'R$ #,##0.00';
+      } else if (m && m.startsWith('row:')) {
+        const parts = m.split(':');
+        const bg = parts[1];
+        const tipo = parts[2]; // D=doença, B=bolsa
+        const fgColor = ci===4 ? (tipo==='D'?C.DOENC_H:C.BOLSA_H) : C.TEXT;
+        const bold = ci===4 || isNum;
+        cell.s = hair(bg, fgColor, isNum?'right':(ci<=1?'center':'left'), bold, 8.5);
+        if (isNum && val) cell.s.numFmt = 'R$ #,##0.00';
+      }
+    });
+  });
+
+  ws1['!freeze'] = {xSplit:0, ySplit:3};
+  XLSX.utils.book_append_sheet(wb, fixCellTypes(ws1), '📋 Detalhado');
+
+  // ── ABA 2 — RESUMO POR EMPRESA / TIPO ───────────────────────────
+  const rows2 = [], meta2 = [];
+  const R2 = (d,m) => { rows2.push(d); meta2.push(m); };
+
+  R2(['EQUILIBRYM — RESUMO DE AFASTAMENTOS POR EMPRESA'], 'title');
+  R2(['Empresa: '+(empresa?.razao||'TODAS')+'  |  Gerado em: '+hoje], 'subtitle');
+  R2([], 'space');
+  R2(['EMPRESA','COMPETÊNCIA','TIPO','CÓD.','QTD. FUNC.','TOTAL DIAS','TOTAL (R$)'], 'header');
+
+  // Agrupar por empresa + competência + tipo
+  const grupos = {};
+  registros.forEach(r => {
+    const key = r.empresa + '|' + r.competencia + '|' + r.codigo;
+    if (!grupos[key]) grupos[key] = {empresa:r.empresa, comp:r.competencia, tipo:r.tipo, codigo:r.codigo, funcs:new Set(), dias:0, valor:0};
+    grupos[key].funcs.add(r.nome);
+    grupos[key].dias += r.dias||0;
+    grupos[key].valor += r.valor||0;
+  });
+
+  let gt2 = {dias:0, valor:0, funcs:new Set()};
+  Object.values(grupos).sort((a,b) => a.comp.localeCompare(b.comp)||a.empresa.localeCompare(b.empresa)).forEach((g,gi) => {
+    const [ano, mes] = g.comp.split('-');
+    const mesesNomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    const mesNome = (mesesNomes[(parseInt(mes)||1)-1]||'')+'/'+ano;
+    const isBolsa = g.codigo === '8813';
+    const bg = isBolsa ? (gi%2===0?C.BOLSA_BG:'EDF8FF') : (gi%2===0?C.DOENC_BG:'FFF5F5');
+    R2([g.empresa, mesNome, g.tipo, g.codigo, g.funcs.size, g.dias||null, g.valor||null], 'row:'+bg+':'+(isBolsa?'B':'D'));
+    gt2.dias += g.dias; gt2.valor += g.valor;
+    g.funcs.forEach(n => gt2.funcs.add(n));
+  });
+
+  R2([], 'space');
+  R2(['TOTAL GERAL','','','',gt2.funcs.size||null,gt2.dias||null,gt2.valor||null], 'grandtotal');
+
+  const ws2 = XLSX.utils.aoa_to_sheet(rows2);
+  ws2['!cols'] = [{wch:30},{wch:12},{wch:30},{wch:7},{wch:12},{wch:12},{wch:14}];
+  ws2['!rows'] = rows2.map((_,i) => {
+    const m = meta2[i];
+    return m==='title'?{hpt:28}:m==='subtitle'?{hpt:16}:m==='header'?{hpt:22}:
+           m==='grandtotal'?{hpt:22}:m==='space'?{hpt:5}:{hpt:15};
+  });
+  ws2['!merges'] = [{s:{r:0,c:0},e:{r:0,c:6}},{s:{r:1,c:0},e:{r:1,c:6}}];
+  rows2.forEach((_,ri) => {
+    if (meta2[ri]==='grandtotal') ws2['!merges'].push({s:{r:ri,c:0},e:{r:ri,c:3}});
+  });
+
+  rows2.forEach((row, ri) => {
+    const m = meta2[ri];
+    if (m==='space') return;
+    row.forEach((_, ci) => {
+      const addr = XLSX.utils.encode_cell({r:ri, c:ci});
+      if (!ws2[addr]) ws2[addr] = {t:'s', v:''};
+      const cell = ws2[addr]; const val = cell.v;
+      const isNum = ci >= 4;
+      const isBolsa = m && m.includes(':B');
+
+      if (m==='title') { cell.s = sty(true, C.TEAL_DK, 'FFFFFF', 'left', 14); }
+      else if (m==='subtitle') { cell.s = sty(false, C.TEAL_LT, C.TEAL_DK, 'left', 9); }
+      else if (m==='header') { cell.s = sty(true, C.SLATE, 'FFFFFF', 'center', 9, true); }
+      else if (m==='grandtotal') {
+        cell.s = sty(true, C.TOTAL_BG, 'FFFFFF', isNum?'right':'left', 11);
+        if (isNum && val) cell.s.numFmt = ci===6?'R$ #,##0.00':'#,##0';
+      } else if (m && m.startsWith('row:')) {
+        const bg = m.split(':')[1];
+        const fgTipo = isBolsa ? C.BOLSA_H : C.DOENC_H;
+        cell.s = hair(bg, ci===2?fgTipo:C.TEXT, isNum?'right':(ci<=1?'left':'left'), ci===2||isNum, 9);
+        if (isNum && val) cell.s.numFmt = ci===6?'R$ #,##0.00':'#,##0';
+      }
+    });
+  });
+
+  XLSX.utils.book_append_sheet(wb, fixCellTypes(ws2), '📊 Resumo por Empresa');
+
+  // ── ABA 3 — RESUMO MENSAL ────────────────────────────────────────
+  const rows3 = [], meta3 = [];
+  const R3 = (d,m) => { rows3.push(d); meta3.push(m); };
+  const mesesNomes3 = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+  R3(['EQUILIBRYM — RESUMO MENSAL DE AFASTAMENTOS'], 'title');
+  R3(['Empresa: '+(empresa?.razao||'TODAS')+'  |  Gerado em: '+hoje], 'subtitle');
+  R3([], 'space');
+  R3(['COMPETÊNCIA',
+      'AFAST. DOENÇA (8870)\nQtd. Func.','DIAS','VALOR (R$)',
+      'BOLSA AUX AFAST. (8813)\nQtd. Func.','DIAS','VALOR (R$)',
+      'TOTAL DIAS','TOTAL (R$)'], 'header');
+
+  const porMes = {};
+  registros.forEach(r => {
+    if (!porMes[r.competencia]) porMes[r.competencia] = {
+      d:{funcs:new Set(),dias:0,val:0}, b:{funcs:new Set(),dias:0,val:0}
+    };
+    const k = r.codigo==='8870' ? 'd' : 'b';
+    porMes[r.competencia][k].funcs.add(r.nome);
+    porMes[r.competencia][k].dias += r.dias||0;
+    porMes[r.competencia][k].val  += r.valor||0;
+  });
+
+  let gt3 = {df:new Set(),dd:0,dv:0, bf:new Set(),bd:0,bv:0};
+  Object.keys(porMes).sort().forEach((comp,mi) => {
+    const [ano, mes] = comp.split('-');
+    const mesNome = (mesesNomes3[(parseInt(mes)||1)-1]||'')+'/'+ano;
+    const pm = porMes[comp];
+    const totD = pm.d.dias + pm.b.dias;
+    const totV = pm.d.val  + pm.b.val;
+    R3([
+      mesNome,
+      pm.d.funcs.size||null, pm.d.dias||null, pm.d.val||null,
+      pm.b.funcs.size||null, pm.b.dias||null, pm.b.val||null,
+      totD||null, totV||null
+    ], mi%2===0?'even':'odd');
+    pm.d.funcs.forEach(n=>gt3.df.add(n)); gt3.dd+=pm.d.dias; gt3.dv+=pm.d.val;
+    pm.b.funcs.forEach(n=>gt3.bf.add(n)); gt3.bd+=pm.b.dias; gt3.bv+=pm.b.val;
+  });
+
+  R3([], 'space');
+  R3(['TOTAL GERAL',
+      gt3.df.size||null, gt3.dd||null, gt3.dv||null,
+      gt3.bf.size||null, gt3.bd||null, gt3.bv||null,
+      (gt3.dd+gt3.bd)||null, (gt3.dv+gt3.bv)||null], 'grandtotal');
+
+  const ws3 = XLSX.utils.aoa_to_sheet(rows3);
+  ws3['!cols'] = [{wch:14},{wch:12},{wch:10},{wch:14},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14}];
+  ws3['!rows'] = rows3.map((_,i) => {
+    const m = meta3[i];
+    return m==='title'?{hpt:28}:m==='subtitle'?{hpt:16}:m==='header'?{hpt:32}:
+           m==='grandtotal'?{hpt:22}:m==='space'?{hpt:5}:{hpt:15};
+  });
+  ws3['!merges'] = [
+    {s:{r:0,c:0},e:{r:0,c:8}},{s:{r:1,c:0},e:{r:1,c:8}},
+    {s:{r:3,c:1},e:{r:3,c:3}},{s:{r:3,c:4},e:{r:3,c:6}},
+  ];
+  rows3.forEach((_,ri) => {
+    if (meta3[ri]==='grandtotal') ws3['!merges'].push({s:{r:ri,c:0},e:{r:ri,c:0}});
+  });
+
+  rows3.forEach((row, ri) => {
+    const m = meta3[ri];
+    if (m==='space') return;
+    row.forEach((_, ci) => {
+      const addr = XLSX.utils.encode_cell({r:ri, c:ci});
+      if (!ws3[addr]) ws3[addr] = {t:'s', v:''};
+      const cell = ws3[addr]; const val = cell.v;
+      const isDoencaBlock = ci>=1 && ci<=3;
+      const isBolsaBlock  = ci>=4 && ci<=6;
+      const isTotalBlock  = ci>=7;
+      const isVal = ci===3||ci===6||ci===8;
+
+      if (m==='title') { cell.s = sty(true, C.TEAL_DK, 'FFFFFF', 'left', 14); }
+      else if (m==='subtitle') { cell.s = sty(false, C.TEAL_LT, C.TEAL_DK, 'left', 9); }
+      else if (m==='header') {
+        const bg = ci===0?C.SLATE:isDoencaBlock?C.DOENC_H:isBolsaBlock?C.BOLSA_H:C.TOTAL_BG;
+        cell.s = sty(true, bg, 'FFFFFF', 'center', 8.5, true);
+      } else if (m==='grandtotal') {
+        cell.s = sty(true, C.TOTAL_BG, 'FFFFFF', ci===0?'left':'right', 11);
+        if (val && isVal) cell.s.numFmt = 'R$ #,##0.00';
+        else if (val) cell.s.numFmt = '#,##0';
+      } else if (m==='even'||m==='odd') {
+        const bg = m==='even' ? (isDoencaBlock?'FFF5F5':isBolsaBlock?'EDF8FF':C.TEAL_XLT) : C.WHITE;
+        cell.s = hair(bg, C.TEXT, ci===0?'left':'right', ci===0||isTotalBlock, 9);
+        if (val && isVal) cell.s.numFmt = 'R$ #,##0.00';
+        else if (val && ci!==0) cell.s.numFmt = '#,##0';
+      }
+    });
+  });
+
+  XLSX.utils.book_append_sheet(wb, fixCellTypes(ws3), '📅 Resumo Mensal');
+}
 
 
 // ═══════════════════════════════════════════════════════
