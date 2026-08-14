@@ -1883,11 +1883,16 @@ function exportarExcel() {
     const periodoLabel = periodoDE && periodoATE
       ? periodoDE + '_a_' + periodoATE
       : periodoDE || periodoATE || new Date().toISOString().slice(0,7);
-    const wb = XLSX.utils.book_new();
-    buildAfastamentosSheet(wb, folhasFilt, empresa, periodoDE, periodoATE);
-    const fname = 'Afastamentos_' + (empresa?.razao||'todas').replace(/\s+/g,'_').substring(0,20) + '_' + periodoLabel + '.xlsx';
-    XLSX.writeFile(wb, fname);
-    toast('Relatório de Afastamentos exportado! ' + folhasFilt.length + ' folha(s).');
+    try {
+      const wb = XLSX.utils.book_new();
+      buildAfastamentosSheet(wb, folhasFilt, empresa, periodoDE, periodoATE);
+      const fname = 'Afastamentos_' + (empresa?.razao||'todas').replace(/\s+/g,'_').substring(0,20) + '_' + periodoLabel + '.xlsx';
+      XLSX.writeFile(wb, fname);
+      toast('Relatório de Afastamentos exportado! ' + folhasFilt.length + ' folha(s).');
+    } catch(err) {
+      console.error('Erro ao gerar afastamentos:', err);
+      toast('Erro ao gerar relatório: ' + err.message, 'err');
+    }
     return;
   }
 
@@ -2510,6 +2515,7 @@ function buildResumoSheet(wb, funcs, empresa, competencia) {
 // RELATÓRIO DE AFASTAMENTOS
 // ═══════════════════════════════════════════════════════
 function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
+  try {
   const hoje = new Date().toLocaleDateString('pt-BR');
 
   // Paleta
@@ -2753,9 +2759,13 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
     const [ano, mes] = g.comp.split('-');
     const mesesNomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
     const mesNome = (mesesNomes[(parseInt(mes)||1)-1]||'')+'/'+ano;
-    const isBolsa = g.codigo === '8813';
-    const bg = isBolsa ? (gi%2===0?C.BOLSA_BG:'EDF8FF') : (gi%2===0?C.DOENC_BG:'FFF5F5');
-    R2([g.empresa, mesNome, g.tipo, g.codigo, g.funcs.size, g.dias||null, g.valor||null], 'row:'+bg+':'+(isBolsa?'B':'D'));
+    const isBolsa  = g.codigo === '8813';
+    const isFaltaG = g.codigo === '246' || g.codigo === '8792';
+    const bg2 = isBolsa   ? (gi%2===0?C.BOLSA_BG:'EDF8FF')
+              : isFaltaG  ? (gi%2===0?C.WARN_LT:'FFF8EE')
+              :              (gi%2===0?C.DOENC_BG:'FFF5F5');
+    const tipoTag2 = isBolsa?'B':isFaltaG?'F':'D';
+    R2([g.empresa, mesNome, g.tipo, g.codigo, g.funcs.size, g.dias||null, g.valor||null], 'row:'+bg2+':'+tipoTag2);
     gt2.dias += g.dias; gt2.valor += g.valor;
     g.funcs.forEach(n => gt2.funcs.add(n));
   });
@@ -2792,9 +2802,11 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
         cell.s = sty(true, C.TOTAL_BG, 'FFFFFF', isNum?'right':'left', 11);
         if (isNum && val) cell.s.numFmt = ci===6?'R$ #,##0.00':'#,##0';
       } else if (m && m.startsWith('row:')) {
-        const bg = m.split(':')[1];
-        const fgTipo = isBolsa ? C.BOLSA_H : isFalta2 ? C.WARN : C.DOENC_H;
-        cell.s = hair(bg, ci===2?fgTipo:C.TEXT, isNum?'right':(ci<=1?'left':'left'), ci===2||isNum, 9);
+        const partsR2 = m.split(':');
+        const bgR2 = partsR2[1] || C.WHITE;
+        const tipoR2 = partsR2[2] || 'D';
+        const fgR2 = tipoR2==='B' ? C.BOLSA_H : tipoR2==='F' ? C.WARN : C.DOENC_H;
+        cell.s = hair(bgR2, ci===2?fgR2:C.TEXT, isNum?'right':'left', ci===2||isNum, 9);
         if (isNum && val) cell.s.numFmt = ci===6?'R$ #,##0.00':'#,##0';
       }
     });
@@ -2892,19 +2904,17 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
       if (m==='title') { cell.s = sty(true, C.TEAL_DK, 'FFFFFF', 'left', 14); }
       else if (m==='subtitle') { cell.s = sty(false, C.TEAL_LT, C.TEAL_DK, 'left', 9); }
       else if (m==='header') {
-        const isFaltaBlock = ci>=7 && ci<=9;
-        const isTotBlock2  = ci>=10;
-        const bg = ci===0?C.SLATE:isDoencaBlock?C.DOENC_H:isBolsaBlock?C.BOLSA_H:isFaltaBlock?C.WARN:C.TOTAL_BG;
-        cell.s = sty(true, bg, 'FFFFFF', 'center', 8.5, true);
+        const bgH = ci===0?C.SLATE:isDoencaBlock?C.DOENC_H:isBolsaBlock?C.BOLSA_H:isFaltaBlock?C.WARN:C.TOTAL_BG;
+        cell.s = sty(true, bgH, 'FFFFFF', 'center', 8.5, true);
       } else if (m==='grandtotal') {
         cell.s = sty(true, C.TOTAL_BG, 'FFFFFF', ci===0?'left':'right', 11);
         if (val && isVal) cell.s.numFmt = 'R$ #,##0.00';
         else if (val) cell.s.numFmt = '#,##0';
       } else if (m==='even'||m==='odd') {
-        const bg = m==='even'
-          ? (isDoencaBlock?'FFF5F5':isBolsaBlock?'EDF8FF':isFaltaBlock||isTotBlock2?C.TEAL_XLT:'FFFBEB')
+        const bgE = m==='even'
+          ? (isDoencaBlock?'FFF5F5':isBolsaBlock?'EDF8FF':isFaltaBlock?'FFFBEB':C.TEAL_XLT)
           : C.WHITE;
-        cell.s = hair(bg, C.TEXT, ci===0?'left':'right', ci===0||isTotalBlock, 9);
+        cell.s = hair(bgE, C.TEXT, ci===0?'left':'right', ci===0||isTotalBlock, 9);
         if (val && isVal) cell.s.numFmt = 'R$ #,##0.00';
         else if (val && ci!==0) cell.s.numFmt = '#,##0';
       }
@@ -2912,6 +2922,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
   });
 
   XLSX.utils.book_append_sheet(wb, fixCellTypes(ws3), '📅 Resumo Mensal');
+  } catch(err) { console.error('buildAfastamentosSheet erro:', err); throw err; }
 }
 
 
