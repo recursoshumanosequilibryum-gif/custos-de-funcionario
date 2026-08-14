@@ -588,6 +588,17 @@
             <option value="2023">2023</option>
           </select>
         </div>
+        <div id="exp-periodo-box" style="display:none;background:var(--teal-xlt);border:1px solid var(--teal-lt);border-radius:8px;padding:12px;margin-top:4px">
+          <div style="font-size:.72rem;font-weight:700;color:var(--teal-dk);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">📅 Período de Afastamentos</div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label>De</label>
+            <input type="month" id="exp-periodo-de">
+          </div>
+          <div class="form-group">
+            <label>Até</label>
+            <input type="month" id="exp-periodo-ate">
+          </div>
+        </div>
         <div class="form-group">
           <label>Situação</label>
           <select id="exp-status">
@@ -1752,6 +1763,39 @@ function exportFuncCSV() {
 // EXPORTAR (funções de controle)
 // ═══════════════════════════════════════════════════════
 
+function updateExportHint() {
+  const fmt = document.getElementById('exp-formato')?.value || '';
+  // Mostrar/ocultar filtro de período
+  const box = document.getElementById('exp-periodo-box');
+  if (box) {
+    box.style.display = fmt === 'afastamentos' ? '' : 'none';
+    if (fmt === 'afastamentos') {
+      const de  = document.getElementById('exp-periodo-de');
+      const ate = document.getElementById('exp-periodo-ate');
+      if (de && !de.value) {
+        const d = new Date(); d.setMonth(d.getMonth() - 5);
+        de.value = d.toISOString().slice(0, 7);
+      }
+      if (ate && !ate.value) {
+        ate.value = new Date().toISOString().slice(0, 7);
+      }
+    }
+  }
+  // Hint text
+  const hint = document.getElementById('exp-format-hint');
+  if (!hint) return;
+  const totalFolhas = (DB.folhas || []).length;
+  const msgs = {
+    espelho: `<div class="alert alert-info">⭐ <strong>Espelho da Folha</strong> — Planilha fiel ao PDF com rubricas, proventos, descontos e provisões (3 abas). Requer PDF importado. <strong>${totalFolhas}</strong> folha(s) disponíveis.</div>`,
+    anual:   `<div class="alert alert-info">📅 <strong>Relatório Anual</strong> — Consolida todas as folhas do ano selecionado (3 abas). <strong>${totalFolhas}</strong> folha(s) disponíveis.</div>`,
+    modelo:  `<div class="alert alert-info">📋 <strong>Modelo Gerencial</strong> — Exporta dados do cadastro com benefícios e provisionamento.</div>`,
+    resumo:  `<div class="alert alert-info">📊 <strong>Resumo por Departamento</strong> — Visão consolidada por centro de custo.</div>`,
+    afastamentos: `<div class="alert alert-info">🏥 <strong>Relatório de Afastamentos</strong> — Lista funcionários com rubrica <strong>8870</strong> (Afast. Doença) e <strong>8813</strong> (Bolsa Aux Afastamento) nas folhas importadas do período selecionado. <strong>${totalFolhas}</strong> folha(s) disponíveis.</div>`,
+  };
+  hint.innerHTML = msgs[fmt] || '';
+}
+
+
 function getFilteredFuncs() {
   const empId  = document.getElementById('exp-empresa').value;
   const depto  = document.getElementById('exp-depto').value;
@@ -1821,6 +1865,31 @@ function exportarExcel() {
   const formato    = document.getElementById('exp-formato').value;
   const empresa    = DB.empresas.find(e => e.id === empId);
   const ano        = document.getElementById('exp-ano')?.value || new Date().getFullYear().toString();
+
+  // ── Relatório de Afastamentos ─────────────────────────
+  if (formato === 'afastamentos') {
+    const periodoDE  = document.getElementById('exp-periodo-de')?.value  || '';
+    const periodoATE = document.getElementById('exp-periodo-ate')?.value || '';
+    const folhasFilt = (DB.folhas||[]).filter(f => {
+      if (empId && f.empresaId !== empId) return false;
+      if (periodoDE  && (f.competencia||'') < periodoDE)  return false;
+      if (periodoATE && (f.competencia||'') > periodoATE) return false;
+      return true;
+    });
+    if (!folhasFilt.length) {
+      toast('Nenhuma folha encontrada no período selecionado. Importe os PDFs primeiro.', 'warn');
+      return;
+    }
+    const periodoLabel = periodoDE && periodoATE
+      ? periodoDE + '_a_' + periodoATE
+      : periodoDE || periodoATE || new Date().toISOString().slice(0,7);
+    const wb = XLSX.utils.book_new();
+    buildAfastamentosSheet(wb, folhasFilt, empresa, periodoDE, periodoATE);
+    const fname = 'Afastamentos_' + (empresa?.razao||'todas').replace(/\s+/g,'_').substring(0,20) + '_' + periodoLabel + '.xlsx';
+    XLSX.writeFile(wb, fname);
+    toast('Relatório de Afastamentos exportado! ' + folhasFilt.length + ' folha(s).');
+    return;
+  }
 
   // ── Relatório Anual ─────────────────────────────────
   if (formato === 'anual') {
@@ -2440,7 +2509,7 @@ function buildResumoSheet(wb, funcs, empresa, competencia) {
 // ═══════════════════════════════════════════════════════
 // RELATÓRIO DE AFASTAMENTOS
 // ═══════════════════════════════════════════════════════
-function buildAfastamentosSheet(wb, folhas, empresa) {
+function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
   const hoje = new Date().toLocaleDateString('pt-BR');
 
   // Paleta
@@ -2518,7 +2587,8 @@ function buildAfastamentosSheet(wb, folhas, empresa) {
   const R1 = (d,m) => { rows1.push(d); meta1.push(m); };
 
   R1(['EQUILIBRYM — RELATÓRIO DE AFASTAMENTOS POR PERÍODO'], 'title');
-  R1(['Empresa: '+(empresa?.razao||'TODAS AS EMPRESAS')+'  |  CNPJ: '+(empresa?.cnpj||'')+'  |  Gerado em: '+hoje+'  |  Total de registros: '+registros.length], 'subtitle');
+  const periodoStr = (periodoDE && periodoATE) ? 'Período: ' + periodoDE + ' a ' + periodoATE + '  |  ' : '';
+  R1(['Empresa: '+(empresa?.razao||'TODAS AS EMPRESAS')+'  |  CNPJ: '+(empresa?.cnpj||'')+'  |  '+periodoStr+'Gerado em: '+hoje+'  |  Total de registros: '+registros.length], 'subtitle');
   R1([], 'space');
 
   // Agrupar por competência
