@@ -2546,6 +2546,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
 
   const CODES_DOENCA = ['8870'];  // DIAS AFAST. DOENCA C/DIR.INTEGRAIS
   const CODES_BOLSA  = ['8813'];  // BOLSA AUX DIAS AFASTAMENTO DIREITOS INT
+  const CODES_FALTAS = ['246','8792'];  // DIAS FALTAS BOLSA AUXILIO / DIAS FALTAS (desconto)
 
   folhas.sort((a,b) => (a.competencia||'').localeCompare(b.competencia||'')).forEach(folha => {
     const comp = folha.competencia || '';
@@ -2579,6 +2580,20 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
           periodo: ''
         });
       });
+
+      // Buscar 246 - Dias Faltas Bolsa Auxílio
+      rubricas.filter(r => CODES_FALTAS.includes(r.code)).forEach(r => {
+        const descFalta = r.code === '8792' ? 'DIAS FALTAS (8792)' : 'DIAS FALTAS BOLSA AUXILIO (246)';
+        registros.push({
+          competencia: comp, empresa: empNome,
+          nome: f.nome, cpf: f.cpf||'', cargo: f.cargo||'',
+          vinculo: f.vinculo||'', depto: f.departamento||'',
+          tipo: descFalta, codigo: r.code,
+          dias: parseFloat(String(r.qty||'0').replace(',','.')) || 0,
+          valor: r.val || 0,
+          periodo: ''
+        });
+      });
     });
   });
 
@@ -2604,6 +2619,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
 
   let totalDias8870 = 0, totalVal8870 = 0;
   let totalDias8813 = 0, totalVal8813 = 0;
+  let totalDias246  = 0, totalVal246  = 0;
 
   Object.keys(porComp).sort().forEach(comp => {
     const regs = porComp[comp];
@@ -2631,8 +2647,9 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
       totDiasComp += r.dias||0;
       totValComp  += r.valor||0;
 
-      if (r.codigo === '8870') { totalDias8870 += r.dias||0; totalVal8870 += r.valor||0; }
-      else                     { totalDias8813 += r.dias||0; totalVal8813 += r.valor||0; }
+      if (r.codigo === '8870')                          { totalDias8870 += r.dias||0; totalVal8870 += r.valor||0; }
+      else if (r.codigo === '8813')                     { totalDias8813 += r.dias||0; totalVal8813 += r.valor||0; }
+      else if (r.codigo === '246' || r.codigo === '8792'){ totalDias246  += r.dias||0; totalVal246  += r.valor||0; }
     });
 
     // Subtotal competência
@@ -2642,7 +2659,10 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
 
   // Total geral
   R1([], 'space');
-  R1(['','TOTAL GERAL','','','','','','',totalDias8870+totalDias8813||null,totalVal8870+totalVal8813||null], 'grandtotal');
+  R1(['','TOTAL GERAL','','','','','','',
+    (totalDias8870+totalDias8813+totalDias246)||null,
+    (totalVal8870+totalVal8813+totalVal246)||null
+  ], 'grandtotal');
 
   const ws1 = XLSX.utils.aoa_to_sheet(rows1);
   ws1['!cols'] = [{wch:28},{wch:7},{wch:24},{wch:18},{wch:34},{wch:16},{wch:26},{wch:18},{wch:8},{wch:14}];
@@ -2698,7 +2718,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
         const parts = m.split(':');
         const bg = parts[1];
         const tipo = parts[2]; // D=doença, B=bolsa
-        const fgColor = ci===4 ? (tipo==='D'?C.DOENC_H:C.BOLSA_H) : C.TEXT;
+        const fgColor = ci===4 ? (tipo==='D'?C.DOENC_H:tipo==='F'?C.WARN:C.BOLSA_H) : C.TEXT;
         const bold = ci===4 || isNum;
         cell.s = hair(bg, fgColor, isNum?'right':(ci<=1?'center':'left'), bold, 8.5);
         if (isNum && val) cell.s.numFmt = 'R$ #,##0.00';
@@ -2773,7 +2793,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
         if (isNum && val) cell.s.numFmt = ci===6?'R$ #,##0.00':'#,##0';
       } else if (m && m.startsWith('row:')) {
         const bg = m.split(':')[1];
-        const fgTipo = isBolsa ? C.BOLSA_H : C.DOENC_H;
+        const fgTipo = isBolsa ? C.BOLSA_H : isFalta2 ? C.WARN : C.DOENC_H;
         cell.s = hair(bg, ci===2?fgTipo:C.TEXT, isNum?'right':(ci<=1?'left':'left'), ci===2||isNum, 9);
         if (isNum && val) cell.s.numFmt = ci===6?'R$ #,##0.00':'#,##0';
       }
@@ -2793,52 +2813,64 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
   R3(['COMPETÊNCIA',
       'AFAST. DOENÇA (8870)\nQtd. Func.','DIAS','VALOR (R$)',
       'BOLSA AUX AFAST. (8813)\nQtd. Func.','DIAS','VALOR (R$)',
+      'DIAS FALTAS (246)\nQtd. Func.','DIAS','VALOR (R$)',
       'TOTAL DIAS','TOTAL (R$)'], 'header');
 
   const porMes = {};
   registros.forEach(r => {
     if (!porMes[r.competencia]) porMes[r.competencia] = {
-      d:{funcs:new Set(),dias:0,val:0}, b:{funcs:new Set(),dias:0,val:0}
+      d:{funcs:new Set(),dias:0,val:0},
+      b:{funcs:new Set(),dias:0,val:0},
+      f:{funcs:new Set(),dias:0,val:0}
     };
-    const k = r.codigo==='8870' ? 'd' : 'b';
+    const k = r.codigo==='8870' ? 'd' : (r.codigo==='246'||r.codigo==='8792') ? 'f' : 'b';
     porMes[r.competencia][k].funcs.add(r.nome);
     porMes[r.competencia][k].dias += r.dias||0;
     porMes[r.competencia][k].val  += r.valor||0;
   });
 
-  let gt3 = {df:new Set(),dd:0,dv:0, bf:new Set(),bd:0,bv:0};
+  let gt3 = {df:new Set(),dd:0,dv:0, bf:new Set(),bd:0,bv:0, ff:new Set(),fd:0,fv:0};
   Object.keys(porMes).sort().forEach((comp,mi) => {
     const [ano, mes] = comp.split('-');
     const mesNome = (mesesNomes3[(parseInt(mes)||1)-1]||'')+'/'+ano;
     const pm = porMes[comp];
     const totD = pm.d.dias + pm.b.dias;
     const totV = pm.d.val  + pm.b.val;
+    const totD3 = pm.d.dias + pm.b.dias + pm.f.dias;
+    const totV3 = pm.d.val  + pm.b.val  + pm.f.val;
     R3([
       mesNome,
       pm.d.funcs.size||null, pm.d.dias||null, pm.d.val||null,
       pm.b.funcs.size||null, pm.b.dias||null, pm.b.val||null,
-      totD||null, totV||null
+      pm.f.funcs.size||null, pm.f.dias||null, pm.f.val||null,
+      totD3||null, totV3||null
     ], mi%2===0?'even':'odd');
     pm.d.funcs.forEach(n=>gt3.df.add(n)); gt3.dd+=pm.d.dias; gt3.dv+=pm.d.val;
     pm.b.funcs.forEach(n=>gt3.bf.add(n)); gt3.bd+=pm.b.dias; gt3.bv+=pm.b.val;
+    pm.f.funcs.forEach(n=>gt3.ff.add(n)); gt3.fd+=pm.f.dias; gt3.fv+=pm.f.val;
   });
 
   R3([], 'space');
   R3(['TOTAL GERAL',
       gt3.df.size||null, gt3.dd||null, gt3.dv||null,
       gt3.bf.size||null, gt3.bd||null, gt3.bv||null,
-      (gt3.dd+gt3.bd)||null, (gt3.dv+gt3.bv)||null], 'grandtotal');
+      gt3.ff.size||null, gt3.fd||null, gt3.fv||null,
+      (gt3.dd+gt3.bd+gt3.fd)||null,
+      (gt3.dv+gt3.bv+gt3.fv)||null], 'grandtotal');
 
   const ws3 = XLSX.utils.aoa_to_sheet(rows3);
-  ws3['!cols'] = [{wch:14},{wch:12},{wch:10},{wch:14},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14}];
+  ws3['!cols'] = [{wch:14},{wch:10},{wch:8},{wch:13},{wch:10},{wch:8},{wch:13},{wch:10},{wch:8},{wch:13},{wch:10},{wch:13}];
   ws3['!rows'] = rows3.map((_,i) => {
     const m = meta3[i];
     return m==='title'?{hpt:28}:m==='subtitle'?{hpt:16}:m==='header'?{hpt:32}:
            m==='grandtotal'?{hpt:22}:m==='space'?{hpt:5}:{hpt:15};
   });
   ws3['!merges'] = [
-    {s:{r:0,c:0},e:{r:0,c:8}},{s:{r:1,c:0},e:{r:1,c:8}},
-    {s:{r:3,c:1},e:{r:3,c:3}},{s:{r:3,c:4},e:{r:3,c:6}},
+    {s:{r:0,c:0},e:{r:0,c:11}},{s:{r:1,c:0},e:{r:1,c:11}},
+    {s:{r:3,c:1},e:{r:3,c:3}},
+    {s:{r:3,c:4},e:{r:3,c:6}},
+    {s:{r:3,c:7},e:{r:3,c:9}},
+    {s:{r:3,c:10},e:{r:3,c:11}},
   ];
   rows3.forEach((_,ri) => {
     if (meta3[ri]==='grandtotal') ws3['!merges'].push({s:{r:ri,c:0},e:{r:ri,c:0}});
@@ -2853,20 +2885,25 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
       const cell = ws3[addr]; const val = cell.v;
       const isDoencaBlock = ci>=1 && ci<=3;
       const isBolsaBlock  = ci>=4 && ci<=6;
-      const isTotalBlock  = ci>=7;
-      const isVal = ci===3||ci===6||ci===8;
+      const isFaltaBlock  = ci>=7 && ci<=9;
+      const isTotalBlock  = ci>=10;
+      const isVal = ci===3||ci===6||ci===9||ci===11;
 
       if (m==='title') { cell.s = sty(true, C.TEAL_DK, 'FFFFFF', 'left', 14); }
       else if (m==='subtitle') { cell.s = sty(false, C.TEAL_LT, C.TEAL_DK, 'left', 9); }
       else if (m==='header') {
-        const bg = ci===0?C.SLATE:isDoencaBlock?C.DOENC_H:isBolsaBlock?C.BOLSA_H:C.TOTAL_BG;
+        const isFaltaBlock = ci>=7 && ci<=9;
+        const isTotBlock2  = ci>=10;
+        const bg = ci===0?C.SLATE:isDoencaBlock?C.DOENC_H:isBolsaBlock?C.BOLSA_H:isFaltaBlock?C.WARN:C.TOTAL_BG;
         cell.s = sty(true, bg, 'FFFFFF', 'center', 8.5, true);
       } else if (m==='grandtotal') {
         cell.s = sty(true, C.TOTAL_BG, 'FFFFFF', ci===0?'left':'right', 11);
         if (val && isVal) cell.s.numFmt = 'R$ #,##0.00';
         else if (val) cell.s.numFmt = '#,##0';
       } else if (m==='even'||m==='odd') {
-        const bg = m==='even' ? (isDoencaBlock?'FFF5F5':isBolsaBlock?'EDF8FF':C.TEAL_XLT) : C.WHITE;
+        const bg = m==='even'
+          ? (isDoencaBlock?'FFF5F5':isBolsaBlock?'EDF8FF':isFaltaBlock||isTotBlock2?C.TEAL_XLT:'FFFBEB')
+          : C.WHITE;
         cell.s = hair(bg, C.TEXT, ci===0?'left':'right', ci===0||isTotalBlock, 9);
         if (val && isVal) cell.s.numFmt = 'R$ #,##0.00';
         else if (val && ci!==0) cell.s.numFmt = '#,##0';
