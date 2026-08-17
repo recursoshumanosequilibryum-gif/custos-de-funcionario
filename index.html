@@ -2621,6 +2621,27 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
     (folha.funcionarios || []).forEach(f => {
       const rubricas = f.rubricas_detalhe || [];
 
+      // Validação anti-contaminação: contar rubricas de provento do próprio funcionário
+      // Se o funcionário NÃO tem rubrica de salário/bolsa própria entre as rubricas,
+      // mas tem rubricas de afastamento, é contaminação do Resumo por Rubrica — ignorar
+      const PROV_PROPRIAS = ['8781','8797','9380','8813','8870','8771','8772']; // salário, bolsa, pró-labore
+      const temProvPropria = rubricas.some(r => PROV_PROPRIAS.includes(r.code) && r.tipo === 'P');
+      const totalRubricas = rubricas.length;
+
+      // Se tem muitas rubricas mas nenhum provento próprio = chunk contaminado com resumo
+      // Ou se é Diretor/Sócio e tem rubricas de estagiário (8813/246/8792) = contaminação
+      const isDir = (f.vinculo||'').toLowerCase().includes('diretor') ||
+                    (f.cargo||'').toLowerCase().includes('socio') ||
+                    (f.cargo||'').toLowerCase().includes('sócio');
+
+      const SKIP_CODES_FOR_DIR = ['8813','246','8792','8870']; // Dirs não têm essas rubricas
+      const isSuspeito = isDir && rubricas.some(r => SKIP_CODES_FOR_DIR.includes(r.code));
+
+      // Se total de rubricas > 15 mas só tem rubricas próprias de 1 pessoa = também suspeito
+      const isBloated = totalRubricas > 15 && !temProvPropria;
+
+      if (isSuspeito || isBloated) return; // pular — dado contaminado
+
       // Buscar 8870 - Doença
       rubricas.filter(r => CODES_DOENCA.includes(r.code)).forEach(r => {
         registros.push({
@@ -2630,7 +2651,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
           tipo: 'DIAS AFAST. DOENÇA', codigo: '8870',
           dias: parseFloat(String(r.qty||'0').replace(',','.')) || 0,
           valor: r.val || 0,
-          periodo: '' // extraído abaixo
+          periodo: ''
         });
       });
 
@@ -2647,7 +2668,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
         });
       });
 
-      // Buscar 246 - Dias Faltas Bolsa Auxílio
+      // Buscar 246 / 8792 - Faltas
       rubricas.filter(r => CODES_FALTAS.includes(r.code)).forEach(r => {
         const descFalta = r.code === '8792' ? 'DIAS FALTAS (8792)' : 'DIAS FALTAS BOLSA AUXILIO (246)';
         registros.push({
@@ -3704,10 +3725,23 @@ function extractFuncionarios(text) {
     const rubricas = [];
     const rubRe = /(\d{1,5})\s+([A-ZÁÉÍÓÚÀÃÕÇÊ%°(][^\d\n]{2,40}?)\s+([\d:,]+)\s+([\d.,]+)\s*([PD\*])/g;
     let m;
-    // Cortar antes do Resumo por Rubrica / Total Geral para não contaminar com totais da folha
-    const cutIdx = chunk.search(/Total Geral Proventos:|Resumo por Rubrica|Líquido Geral:\s*[\d.,]|INSS FGTS, PIS/);
-    const cleanChunk = cutIdx > 0 ? chunk.slice(0, cutIdx) : chunk;
-    for (const line of cleanChunk.split('\n')) {
+
+    // Estratégia: processar linha a linha e PARAR ao encontrar
+    // qualquer linha de resumo/totais da folha inteira
+    const STOP_PATTERNS = [
+      /Total\s+Geral\s+Proventos/i,
+      /Resumo\s+por\s+Rubrica/i,
+      /INSS\s+FGTS,\s+PIS/i,
+      /Sistema\s+licenciado\s+para/i,
+      /Salário\s+contribuição\s+empregados/i,
+      /Apuração\s+Tributos\s+Federais/i,
+      /Saldo\s+(à|a)\s+recolher/i,
+    ];
+
+    const lines = chunk.split('\n');
+    for (const line of lines) {
+      // Para ao encontrar qualquer linha de resumo da folha
+      if (STOP_PATTERNS.some(p => p.test(line))) break;
       rubRe.lastIndex = 0;
       while ((m = rubRe.exec(line)) !== null) {
         rubricas.push({ code: m[1].trim(), desc: m[2].trim().replace(/\s+/g,' '), qty: m[3].trim(), val: parseBR(m[4]), tipo: m[5].trim() });
@@ -4411,24 +4445,29 @@ function renderIndicadores() {
       // Demissões
       if (f.situacao === 'Demitido') m.demissoes++;
 
+      // Anti-contaminação: Diretores/Sócios não têm rubricas de afastamento/falta
+      const isDirFunc = (f.vinculo||'').toLowerCase().includes('diretor') ||
+                        (f.cargo||'').toLowerCase().includes('socio') ||
+                        (f.cargo||'').toLowerCase().includes('sócio');
+
       rubricas.forEach(r => {
         const dias = fmtHQty(r.qty);
         const val  = r.val || 0;
 
-        // 8870 - Afast. Doença
-        if (r.code === '8870') {
+        // 8870 - Afast. Doença (não se aplica a Diretores)
+        if (r.code === '8870' && !isDirFunc) {
           m.diasAfast8870 += dias; m.valAfast8870 += val;
           m.funcsAfast8870.add(f.nome);
           m.detalheAfast.push({ nome:f.nome, cpf:f.cpf||'', depto:f.departamento||'', tipo:'Afast. Doença', codigo:'8870', dias, val });
         }
-        // 8813 - Bolsa Aux Afastamento
-        if (r.code === '8813') {
+        // 8813 - Bolsa Aux Afastamento (não se aplica a Diretores)
+        if (r.code === '8813' && !isDirFunc) {
           m.diasAfast8813 += dias; m.valAfast8813 += val;
           m.funcsAfast8813.add(f.nome);
           m.detalheAfast.push({ nome:f.nome, cpf:f.cpf||'', depto:f.departamento||'', tipo:'Bolsa Aux Afast.', codigo:'8813', dias, val });
         }
-        // 246, 8792 - Faltas
-        if (r.code === '246' || r.code === '8792') {
+        // 246, 8792 - Faltas (não se aplica a Diretores)
+        if ((r.code === '246' || r.code === '8792') && !isDirFunc) {
           m.diasFaltas += dias; m.valFaltas += val;
           m.funcsFaltas.add(f.nome);
           m.detalheAfast.push({ nome:f.nome, cpf:f.cpf||'', depto:f.departamento||'', tipo:'Dias Faltas', codigo:r.code, dias, val });
