@@ -26,7 +26,7 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--slate-lt); color: var(--text); min-height: 100vh; }
 
-  /* ── HEADER ── */
+  /* -- HEADER -- */
   header {
     background: var(--white);
     border-bottom: 2px solid var(--teal);
@@ -44,7 +44,7 @@
     border-radius: 20px; padding: 3px 12px; font-weight: 600; font-size: .8rem;
   }
 
-  /* ── NAV ── */
+  /* -- NAV -- */
   nav {
     background: var(--slate);
     display: flex; gap: 2px;
@@ -61,10 +61,10 @@
   nav button:hover { color: #fff; }
   nav button.active { color: #fff; border-bottom-color: var(--teal); }
 
-  /* ── MAIN ── */
+  /* -- MAIN -- */
   main { padding: 28px; max-width: 1400px; margin: 0 auto; }
 
-  /* ── CARDS ── */
+  /* -- CARDS -- */
   .card {
     background: var(--white); border-radius: 10px;
     box-shadow: var(--shadow); margin-bottom: 24px;
@@ -78,12 +78,12 @@
   .card-header h2 { font-size: 1rem; color: var(--teal-dk); font-weight: 600; display: flex; align-items: center; gap: 8px; }
   .card-body { padding: 20px 24px; }
 
-  /* ── GRID ── */
+  /* -- GRID -- */
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
   .grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
 
-  /* ── FORM ── */
+  /* -- FORM -- */
   label { font-size: .82rem; font-weight: 600; color: var(--slate); display: block; margin-bottom: 4px; }
   input, select, textarea {
     width: 100%; padding: 9px 12px; border: 1.5px solid var(--border);
@@ -93,7 +93,7 @@
   input:focus, select:focus { outline: none; border-color: var(--teal); }
   .form-group { margin-bottom: 14px; }
 
-  /* ── BUTTONS ── */
+  /* -- BUTTONS -- */
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 9px 18px; border-radius: 7px; border: none;
@@ -111,7 +111,7 @@
   .btn-sm { padding: 5px 12px; font-size: .8rem; }
   .btn-icon { padding: 7px 10px; }
 
-  /* ── UPLOAD ZONE ── */
+  /* -- UPLOAD ZONE -- */
   .upload-zone {
     border: 2.5px dashed var(--teal);
     border-radius: 12px; background: var(--teal-lt);
@@ -124,7 +124,7 @@
   .upload-zone p { font-size: .9rem; color: var(--teal-dk); font-weight: 500; }
   .upload-zone small { color: var(--muted); font-size: .8rem; }
 
-  /* ── TABLE ── */
+  /* -- TABLE -- */
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: .82rem; }
   thead th {
@@ -139,7 +139,7 @@
   .td-num { text-align: right; font-variant-numeric: tabular-nums; }
   .td-actions { display: flex; gap: 4px; }
 
-  /* ── STATUS BADGES ── */
+  /* -- STATUS BADGES -- */
   .status {
     display: inline-block; padding: 2px 10px; border-radius: 20px;
     font-size: .75rem; font-weight: 700; letter-spacing: .3px;
@@ -148,7 +148,7 @@
   .status-dem { background: #fed7d7; color: #9b2c2c; }
   .status-dir { background: #e9d8fd; color: #553c9a; }
 
-  /* ── STAT CARDS ── */
+  /* -- STAT CARDS -- */
   .stat-card {
     background: var(--white); border-radius: 10px;
     padding: 18px 20px; box-shadow: var(--shadow);
@@ -158,7 +158,7 @@
   .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: var(--teal-dk); margin-top: 4px; }
   .stat-card .stat-sub { font-size: .78rem; color: var(--muted); margin-top: 2px; }
 
-  /* ── TABS ── */
+  /* -- TABS -- */
   .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 2px solid var(--border); }
   .tab-btn {
     background: none; border: none; cursor: pointer;
@@ -168,11 +168,11 @@
   }
   .tab-btn.active { color: var(--teal); border-bottom-color: var(--teal); }
 
-  /* ── PAGE SECTIONS ── */
+  /* -- PAGE SECTIONS -- */
   .page { display: none; }
   .page.active { display: block; }
 
-  /* ── ALERTS ── */
+  /* -- ALERTS -- */
   .alert {
     padding: 12px 16px; border-radius: 8px; margin-bottom: 16px;
     display: flex; align-items: center; gap: 10px; font-size: .87rem;
@@ -182,11 +182,11 @@
   .alert-warn { background: #fefcbf; color: #744210; }
   .alert-err { background: #fed7d7; color: #9b2c2c; }
 
-  /* ── PROGRESS ── */
+  /* -- PROGRESS -- */
   .progress-bar { background: var(--border); border-radius: 10px; height: 8px; overflow: hidden; }
   .progress-fill { background: var(--teal); height: 100%; border-radius: 10px; transition: width .4s; }
 
-  /* ── LOG ── */
+  /* -- LOG -- */
   .log-box {
     background: #1a202c; color: #68d391; border-radius: 8px;
     padding: 14px 18px; font-family: monospace; font-size: .78rem;
@@ -195,13 +195,13 @@
   .log-box .log-err { color: #fc8181; }
   .log-box .log-warn { color: #f6e05e; }
 
-  /* ── FILTERS ── */
+  /* -- FILTERS -- */
   .filters-bar {
     display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 18px;
   }
   .filters-bar .form-group { margin-bottom: 0; min-width: 150px; }
 
-  /* ── DEPT COLOR CHIPS ── */
+  /* -- DEPT COLOR CHIPS -- */
   .dept-chip {
     display: inline-block; padding: 2px 10px; border-radius: 12px;
     font-size: .75rem; font-weight: 600;
@@ -1619,7 +1619,7 @@ function exportFuncCSV() {
   const empresa = DB.empresas.find(e => e.id === funcs[0]?.empresaId) || DB.empresas[0];
   const hoje = new Date().toLocaleDateString('pt-BR');
 
-  // ── Helper: cabeçalho padrão Equilibrym ──────────────
+  // -- Helper: cabeçalho padrão Equilibrym --------------
   function addHeader(ws, titulo, subtitulo, totalCols) {
     // Linha 0 — título
     const a0 = XLSX.utils.encode_cell({ r:0, c:0 });
@@ -1926,7 +1926,7 @@ function exportarExcel() {
   const empresa    = DB.empresas.find(e => e.id === empId);
   const ano        = document.getElementById('exp-ano')?.value || new Date().getFullYear().toString();
 
-  // ── Relatório de Afastamentos ─────────────────────────
+  // -- Relatório de Afastamentos -------------------------
   if (formato === 'afastamentos') {
     const periodoDE  = document.getElementById('exp-periodo-de')?.value  || '';
     const periodoATE = document.getElementById('exp-periodo-ate')?.value || '';
@@ -1956,7 +1956,7 @@ function exportarExcel() {
     return;
   }
 
-  // ── Relatório Anual ─────────────────────────────────
+  // -- Relatório Anual ---------------------------------
   if (formato === 'anual') {
     const folhasDoAno = (DB.folhas||[]).filter(f =>
       (!empId || f.empresaId === empId) && (f.competencia||'').startsWith(ano)
@@ -1974,7 +1974,7 @@ function exportarExcel() {
     return;
   }
 
-  // ── Espelho da Folha ────────────────────────────────
+  // -- Espelho da Folha --------------------------------
   if (formato === 'espelho') {
     const folha = (DB.folhas||[]).find(f =>
       (!empId || f.empresaId === empId) &&
@@ -1994,7 +1994,7 @@ function exportarExcel() {
     return;
   }
 
-  // ── Modelo Gerencial / Resumo ───────────────────────
+  // -- Modelo Gerencial / Resumo -----------------------
   const funcs = getFilteredFuncs();
   if (!funcs.length) { toast('Nenhum dado para exportar', 'warn'); return; }
   const wb = XLSX.utils.book_new();
@@ -2024,7 +2024,7 @@ function buildEspelhoSheet(wb, folha, empresa) {
   R(['EQUILIBRYM — ESPELHO DA FOLHA DE PAGAMENTO'], 'title');
   R(['Empresa: '+(empresa?.razao||'')+' | CNPJ: '+(empresa?.cnpj||'')+' | Competência: '+(folha.competencia||'')+' | Emissão: '+hoje+' | Total: '+folha.funcionarios.length+' func.'], 'subtitle');
   R([], 'space');
-  R(['','','','','','','━━━ PROVENTOS ━━━','','','','','','━━━ DESCONTOS ━━━','','','','━━━ TOTAIS ━━━','','','━━━ BENEFÍCIOS ━━━','','','','━━━ PROVISÕES GERENCIAIS ━━━','','','',''], 'section');
+  R(['','','','','','','--- PROVENTOS ---','','','','','','--- DESCONTOS ---','','','','--- TOTAIS ---','','','--- BENEFÍCIOS ---','','','','--- PROVISÕES GERENCIAIS ---','','','',''], 'section');
   R(['Cód.','Nome','CPF','Cargo','Vínculo','Adm.','Sal.\nContratual','H. Extra\n90%','DSR\nExtras','Insalub.\n10%','Sal.\nFamília','Outros\nProv.','INSS','VT\n6%','Adiant.\nSalarial','Outros\nDesc.','PROVENTOS','DESCONTOS','LÍQUIDO','VT\nCompra','VR','VA','AM/AO','Enc.\nPatronal','FGTS\nRecolhido','Prov.\n13º','Prov.\nFérias','Custo\nTotal'], 'header');
 
   const funcs=folha.funcionarios||[];
@@ -2316,10 +2316,10 @@ function buildModeloSheet(wb, funcs, empresa, competencia) {
 
   // Seções
   R(['','','','','','',
-     '━━━ TOTAIS DA FOLHA ━━━','','','',
-     '━━━ DESCONTOS ━━━','','',
-     '━━━ BENEFÍCIOS (COMPRA) ━━━','','','','','',
-     '━━━ PROVISÕES GERENCIAIS ━━━','','','',''
+     '--- TOTAIS DA FOLHA ---','','','',
+     '--- DESCONTOS ---','','',
+     '--- BENEFÍCIOS (COMPRA) ---','','','','','',
+     '--- PROVISÕES GERENCIAIS ---','','','',''
   ], 'section');
 
   R([
@@ -2607,7 +2607,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
     border: brd('hair','D1DDE6')
   });
 
-  // ── Coletar dados de afastamento de todas as folhas ──────────────
+  // -- Coletar dados de afastamento de todas as folhas --------------
   const registros = []; // {competencia, empresa, nome, cpf, cargo, vinculo, depto, tipo, dias, valor, periodo}
 
   const CODES_DOENCA = ['8870'];  // DIAS AFAST. DOENCA C/DIR.INTEGRAIS
@@ -2663,7 +2663,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
     });
   });
 
-  // ── ABA 1 — DETALHADO POR FUNCIONÁRIO ───────────────────────────
+  // -- ABA 1 — DETALHADO POR FUNCIONÁRIO ---------------------------
   const rows1 = [], meta1 = [];
   const R1 = (d,m) => { rows1.push(d); meta1.push(m); };
 
@@ -2795,7 +2795,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
   ws1['!freeze'] = {xSplit:0, ySplit:3};
   XLSX.utils.book_append_sheet(wb, fixCellTypes(ws1), '📋 Detalhado');
 
-  // ── ABA 2 — RESUMO POR EMPRESA / TIPO ───────────────────────────
+  // -- ABA 2 — RESUMO POR EMPRESA / TIPO ---------------------------
   const rows2 = [], meta2 = [];
   const R2 = (d,m) => { rows2.push(d); meta2.push(m); };
 
@@ -2874,7 +2874,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
 
   XLSX.utils.book_append_sheet(wb, fixCellTypes(ws2), '📊 Resumo por Empresa');
 
-  // ── ABA 3 — RESUMO MENSAL ────────────────────────────────────────
+  // -- ABA 3 — RESUMO MENSAL ----------------------------------------
   const rows3 = [], meta3 = [];
   const R3 = (d,m) => { rows3.push(d); meta3.push(m); };
   const mesesNomes3 = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
@@ -2991,7 +2991,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
 // ═══════════════════════════════════════════════════════
 
 function buildAnualSheet(wb, folhas, empresa, ano) {
-  // ── Cores ──────────────────────────────────────────────
+  // -- Cores ----------------------------------------------
   const C = {
     TEAL_DK:'2C7A72', TEAL_MD:'3D9E96', TEAL_LT:'E8F5F4', TEAL_XLT:'F4FAFA',
     SLATE:'4A5A72', SLATE_LT:'EEF1F5', WHITE:'FFFFFF', TEXT:'2D3748',
@@ -3047,13 +3047,13 @@ function buildAnualSheet(wb, folhas, empresa, ano) {
     return da.localeCompare(db2) || a.nome.localeCompare(b.nome);
   });
 
-  // ── Build rows ─────────────────────────────────────────
+  // -- Build rows -----------------------------------------
   const rows = [];
   const meta = []; // {type, bg, merges}
 
   const R = (data, type, bg) => { rows.push(data); meta.push({type, bg}); };
 
-  // ── Título ─────────────────────────────────────────────
+  // -- Título ---------------------------------------------
   R(['EQUILIBRYM — RELATÓRIO ANUAL DE CUSTOS DE FOLHA DE PAGAMENTO ' + ano], 'title', C.TEAL_DK);
   R([
     'Empresa: ' + (empresa?.razao || 'TODAS EMPRESAS'),
@@ -3068,7 +3068,7 @@ function buildAnualSheet(wb, folhas, empresa, ano) {
   ], 'subtitle', C.TEAL_LT);
   R([], 'space');
 
-  // ── Cabeçalho fixo + colunas por mês ──────────────────
+  // -- Cabeçalho fixo + colunas por mês ------------------
   // Colunas fixas: [Nome, CPF, Cargo, Vínculo, Dept] = 5 cols
   // Por mês: [Sal, Proventos, Descontos, Liquido, FGTS, VT, VR, VA, AM, Enc, CustoTotal] = 11 cols
   // + Totais anuais: mesmos 11 campos = 11 cols
@@ -3095,7 +3095,7 @@ function buildAnualSheet(wb, folhas, empresa, ano) {
   subCols.forEach(c => headerRow.push(c));
   R(headerRow, 'header');
 
-  // ── Dados ──────────────────────────────────────────────
+  // -- Dados ----------------------------------------------
   // Grand totals acumuladores
   const GT = { sal:0, prov:0, desc:0, liq:0, fgts:0, ben:0, custo:0 };
   const GTm = meses.map(() => ({ sal:0, prov:0, desc:0, liq:0, fgts:0, ben:0, custo:0 }));
@@ -3183,7 +3183,7 @@ function buildAnualSheet(wb, folhas, empresa, ano) {
     });
   });
 
-  // ── Total Geral ─────────────────────────────────────────
+  // -- Total Geral -----------------------------------------
   R([], 'space');
   const gtRow = ['', 'TOTAL GERAL ' + ano + ' — ' + allFuncs.length + ' FUNCIONÁRIOS', '', '', ''];
   GTm.forEach(m => {
@@ -3192,7 +3192,7 @@ function buildAnualSheet(wb, folhas, empresa, ano) {
   gtRow.push(BRL(GT.sal),BRL(GT.prov),BRL(GT.desc),BRL(GT.liq),BRL(GT.fgts),BRL(GT.ben),BRL(GT.custo));
   R(gtRow, 'grandtotal', C.TOTAL);
 
-  // ── Create worksheet ────────────────────────────────────
+  // -- Create worksheet ------------------------------------
   const ws = XLSX.utils.aoa_to_sheet(rows);
 
   // Column widths
@@ -3249,7 +3249,7 @@ function buildAnualSheet(wb, folhas, empresa, ano) {
   });
   ws['!merges'] = merges;
 
-  // ── Apply styles ────────────────────────────────────────
+  // -- Apply styles ----------------------------------------
   const MONTH_PROV_COL  = (mi, sub) => FIXED + mi * PER_MONTH + sub; // sub=0..6
   const ANNUAL_COL      = (sub) => FIXED + meses.length * PER_MONTH + sub;
   const isNumCol = ci => ci >= FIXED;
@@ -4026,7 +4026,7 @@ function parseRubricas(data) {
     return isNaN(n) ? 0 : n;
   };
 
-  // ── Detectar modelo da planilha ──────────────────────────────────
+  // -- Detectar modelo da planilha ----------------------------------
   // Modelo Equilibrym: NOME | Departamento | VT | VR | COMBUSTIVEL | AO | AM
   // Modelo antigo:     ...  | CPF | NOME | ...
   let headerRow = -1;
@@ -4093,7 +4093,7 @@ function parseRubricas(data) {
   rubricaLog('✅ ' + results.length + ' colaboradores encontrados');
   rubricaParsed = results;
 
-  // ── Preview ──────────────────────────────────────────────────────
+  // -- Preview ------------------------------------------------------
   const card = document.getElementById('card-rubrica-preview');
   if (card) card.style.display = '';
   const container = document.getElementById('rubrica-preview-content');
@@ -4374,7 +4374,7 @@ function renderIndicadores() {
     return;
   }
 
-  // ── Consolidar dados por mês ────────────────────────
+  // -- Consolidar dados por mês ------------------------
   const mesesNomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
   const byMes = {};
 
@@ -4449,7 +4449,7 @@ function renderIndicadores() {
   const meses = Object.keys(byMes).sort();
   const dados = meses.map(k => byMes[k]);
 
-  // ── Totais gerais ────────────────────────────────────
+  // -- Totais gerais ------------------------------------
   const gt = {
     admissoes: dados.reduce((s,d)=>s+d.admissoes,0),
     demissoes: dados.reduce((s,d)=>s+d.demissoes,0),
@@ -4459,7 +4459,7 @@ function renderIndicadores() {
     valHE:     dados.reduce((s,d)=>s+d.valHE,0),
   };
 
-  // ── Cards ────────────────────────────────────────────
+  // -- Cards --------------------------------------------
   const cardStyle = (color) => `background:var(--white);border-radius:10px;border:1px solid var(--border);border-left:4px solid ${color};padding:18px;box-shadow:var(--shadow)`;
   document.getElementById('ind-cards').innerHTML = `
     <div style="${cardStyle('var(--teal-dk)')}">
@@ -4489,7 +4489,7 @@ function renderIndicadores() {
     </div>
   `;
 
-  // ── Helper: mini table ─────────────────────────────
+  // -- Helper: mini table -----------------------------
   const miniTable = (headers, rows, emptyMsg) => {
     if (!rows.length) return `<p style="color:var(--muted);font-size:.83rem;text-align:center;padding:20px">${emptyMsg}</p>`;
     return `<table style="width:100%;border-collapse:collapse;font-size:.8rem">
@@ -4503,7 +4503,7 @@ function renderIndicadores() {
     return mesesNomes[(parseInt(m2)||1)-1]+'/'+y;
   };
 
-  // ── Absenteísmo mensal ────────────────────────────
+  // -- Absenteísmo mensal ----------------------------
   const absRows = dados.map(d => {
     const totalDias = d.diasAfast8870 + d.diasAfast8813 + d.diasFaltas;
     const totalFuncs = d.funcsAfast8870.size + d.funcsAfast8813.size + d.funcsFaltas.size;
@@ -4526,7 +4526,7 @@ function renderIndicadores() {
     {label:'Func. c/ Faltas'},{label:'Dias Faltas'},{label:'Total Dias',right:true},{label:'Taxa Abs.',right:true}
   ], absRows, 'Nenhum afastamento registrado.');
 
-  // ── Horas Extras mensal ───────────────────────────
+  // -- Horas Extras mensal ---------------------------
   const heRows = dados.map(d => [
     mesLabel(d.comp),
     d.totalFunc,
@@ -4539,7 +4539,7 @@ function renderIndicadores() {
     {label:'Mês'},{label:'Total Func.'},{label:'Func. c/ HE'},{label:'Total HH',right:true},{label:'Valor HE',right:true},{label:'HH/Func.',right:true}
   ], heRows, 'Nenhuma hora extra registrada.');
 
-  // ── Admissões mensal ──────────────────────────────
+  // -- Admissões mensal ------------------------------
   const admRows = dados.filter(d=>d.admissoes>0).map(d => {
     const admitidos = (d.comp ? (folhas.find(f=>f.competencia===d.comp)?.funcionarios||[]) : [])
       .filter(f => f.admissao && f.admissao.slice(3,10).split('/').reverse().join('-') === d.comp);
@@ -4553,7 +4553,7 @@ function renderIndicadores() {
     {label:'Mês'},{label:'Admissões',right:true},{label:'Funcionários Admitidos'}
   ], admRows, 'Nenhuma admissão no período.');
 
-  // ── Demissões mensal ──────────────────────────────
+  // -- Demissões mensal ------------------------------
   const demRows = dados.filter(d=>d.demissoes>0).map(d => [
     mesLabel(d.comp),
     d.demissoes,
@@ -4563,7 +4563,7 @@ function renderIndicadores() {
     {label:'Mês'},{label:'Demissões',right:true},{label:'Total no Mês',right:true}
   ], demRows, 'Nenhuma demissão no período.');
 
-  // ── Detalhe afastamentos ──────────────────────────
+  // -- Detalhe afastamentos --------------------------
   const allAfast = dados.flatMap(d => d.detalheAfast.map(a => ({...a, comp: d.comp})));
   const afastRows = allAfast.map(a => [
     mesLabel(a.comp),
