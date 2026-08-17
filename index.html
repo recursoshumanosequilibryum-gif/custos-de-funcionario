@@ -979,12 +979,70 @@ let DB = {
 };
 
 // Load from localStorage
+function cleanContaminatedRubricas() {
+  // Remove rubricas do Resumo por Rubrica do PDF indevidamente
+  // atribuídas ao último funcionário da folha (bug do parser)
+  const AFAS_CODES  = ['8870','8813','246','8792','245'];
+  const PROV_OWN    = ['8781','8797','9380','8771','8772'];
+  let fixed = 0;
+
+  (DB.folhas || []).forEach(folha => {
+    (folha.funcionarios || []).forEach(f => {
+      const rubs = f.rubricas_detalhe;
+      if (!rubs || !rubs.length) return;
+
+      const isDir = (f.vinculo||'').toLowerCase().includes('diretor') ||
+                    (f.cargo||'').toLowerCase().includes('socio') ||
+                    (f.cargo||'').toLowerCase().includes('sócio');
+
+      // Diretores/Sócios nunca têm rubricas de afastamento/falta
+      if (isDir) {
+        const before = rubs.length;
+        f.rubricas_detalhe = rubs.filter(r => !AFAS_CODES.includes(r.code));
+        if (f.rubricas_detalhe.length < before) fixed++;
+        return;
+      }
+
+      // Para os demais: detectar contaminação pelo Resumo por Rubrica
+      // Sinal: rubrica 8781 (Salário) com qty > 60 dias = total da folha, não do funcionário
+      const hasBloatedSalary = rubs.some(r =>
+        r.code === '8781' && parseFloat(String(r.qty||'0').replace(',','.')) > 60
+      );
+      const hasBloated8797 = rubs.some(r =>
+        r.code === '8797' && parseFloat(String(r.qty||'0').replace(',','.')) > 60
+      );
+
+      if (hasBloatedSalary || hasBloated8797) {
+        // Chunk contaminado: manter só rubricas com qty razoável
+        f.rubricas_detalhe = rubs.filter(r => {
+          const qty = parseFloat(String(r.qty||'0').replace(',','.')) || 0;
+          if (r.code === '8781' && qty > 60) return false;
+          if (r.code === '8797' && qty > 60) return false;
+          if (r.code === '8813' && qty > 30) return false;
+          if (r.code === '8870' && qty > 30) return false;
+          if (r.code === '998'  && qty > 50) return false;
+          if (r.code === '201'  && qty > 50) return false;
+          return true;
+        });
+        fixed++;
+      }
+    });
+  });
+
+  if (fixed > 0) {
+    saveDB();
+    console.log('[RH] Rubricas contaminadas limpas:', fixed, 'funcionário(s)');
+  }
+}
+
 function loadDB() {
   const saved = localStorage.getItem('equilibrym_folha_db');
   if (saved) {
     try {
       const parsed = JSON.parse(saved);
       DB = { ...DB, ...parsed };
+      // Limpar dados contaminados automaticamente
+      cleanContaminatedRubricas();
     } catch(e) {}
   }
 }
