@@ -285,6 +285,7 @@
   <button onclick="showPage('funcionarios')">👥 Funcionários</button>
   <button onclick="showPage('importar-pdf')">📄 Importar PDF Folha</button>
   <button onclick="showPage('importar-rubricas')">📊 Importar Rubricas</button>
+  <button onclick="showPage('indicadores')">📈 Indicadores RH</button>
   <button onclick="showPage('exportar')">⬇️ Exportar Excel</button>
   <button onclick="showPage('config')">⚙️ Configurações</button>
 </nav>
@@ -549,6 +550,65 @@
 </div>
 
 <!-- ════════════════ EXPORTAR ════════════════ -->
+<div id="page-indicadores" class="page">
+  <div style="padding:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <h1 style="font-size:1.3rem;font-weight:800;color:var(--slate-dk)">📈 Indicadores de RH</h1>
+      <button class="btn btn-primary" onclick="exportarIndicadores()">⬇️ Exportar Excel</button>
+    </div>
+
+    <!-- Filtros -->
+    <div class="card" style="margin-bottom:18px">
+      <div class="card-body" style="padding:14px 18px">
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+          <div class="fg"><label>Empresa</label>
+            <select id="ind-empresa" onchange="renderIndicadores()"><option value="">Todas</option></select>
+          </div>
+          <div class="fg"><label>De</label>
+            <input type="month" id="ind-de" onchange="renderIndicadores()">
+          </div>
+          <div class="fg"><label>Até</label>
+            <input type="month" id="ind-ate" onchange="renderIndicadores()">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="renderIndicadores()">🔍 Atualizar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cards de totais -->
+    <div id="ind-cards" style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px"></div>
+
+    <!-- Gráfico / tabela mensal -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px">
+      <div class="card">
+        <div class="card-header"><h2>📅 Absenteísmo por Mês</h2></div>
+        <div class="card-body" id="ind-abs-mensal" style="overflow-x:auto"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h2>⏰ Horas Extras por Mês</h2></div>
+        <div class="card-body" id="ind-he-mensal" style="overflow-x:auto"></div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px">
+      <div class="card">
+        <div class="card-header"><h2>✅ Admissões por Mês</h2></div>
+        <div class="card-body" id="ind-adm-mensal" style="overflow-x:auto"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h2>❌ Demissões por Mês</h2></div>
+        <div class="card-body" id="ind-dem-mensal" style="overflow-x:auto"></div>
+      </div>
+    </div>
+
+    <!-- Detalhe de afastamentos -->
+    <div class="card">
+      <div class="card-header"><h2>🏥 Detalhamento de Afastamentos e Faltas</h2></div>
+      <div class="card-body" id="ind-afast-detalhe" style="overflow-x:auto"></div>
+    </div>
+  </div>
+</div>
+
 <div id="page-exportar" class="page">
 
   <div class="card" id="card-espelho-info" style="display:none;margin-bottom:0">
@@ -3644,7 +3704,10 @@ function extractFuncionarios(text) {
     const rubricas = [];
     const rubRe = /(\d{1,5})\s+([A-ZÁÉÍÓÚÀÃÕÇÊ%°(][^\d\n]{2,40}?)\s+([\d:,]+)\s+([\d.,]+)\s*([PD\*])/g;
     let m;
-    for (const line of chunk.split('\n')) {
+    // Cortar antes do Resumo por Rubrica / Total Geral para não contaminar com totais da folha
+    const cutIdx = chunk.search(/Total Geral Proventos:|Resumo por Rubrica|Líquido Geral:\s*[\d.,]|INSS FGTS, PIS/);
+    const cleanChunk = cutIdx > 0 ? chunk.slice(0, cutIdx) : chunk;
+    for (const line of cleanChunk.split('\n')) {
       rubRe.lastIndex = 0;
       while ((m = rubRe.exec(line)) !== null) {
         rubricas.push({ code: m[1].trim(), desc: m[2].trim().replace(/\s+/g,' '), qty: m[3].trim(), val: parseBR(m[4]), tipo: m[5].trim() });
@@ -4240,6 +4303,440 @@ function confirmarZerarBeneficios() {
 
 
 // ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
+// INDICADORES DE RH
+// ═══════════════════════════════════════════════════════
+
+function initIndicadores() {
+  // Popular select de empresa
+  const sel = document.getElementById('ind-empresa');
+  if (sel) {
+    sel.innerHTML = '<option value="">Todas</option>' +
+      DB.empresas.map(e => `<option value="${e.id}">${e.razao}</option>`).join('');
+  }
+  // Período padrão: últimos 6 meses
+  const de  = document.getElementById('ind-de');
+  const ate = document.getElementById('ind-ate');
+  if (de && !de.value) {
+    const d = new Date(); d.setMonth(d.getMonth() - 5);
+    de.value = d.toISOString().slice(0,7);
+  }
+  if (ate && !ate.value) {
+    ate.value = new Date().toISOString().slice(0,7);
+  }
+  renderIndicadores();
+}
+
+function getIndFolhas() {
+  const empId = document.getElementById('ind-empresa')?.value || '';
+  const de    = document.getElementById('ind-de')?.value    || '';
+  const ate   = document.getElementById('ind-ate')?.value   || '';
+  return (DB.folhas || []).filter(f => {
+    if (empId && f.empresaId !== empId) return false;
+    if (de    && (f.competencia||'') < de)  return false;
+    if (ate   && (f.competencia||'') > ate) return false;
+    return true;
+  }).sort((a,b) => (a.competencia||'').localeCompare(b.competencia||''));
+}
+
+function parseBRN(v) {
+  if (!v && v !== 0) return 0;
+  return parseFloat(String(v).replace(/\./g,'').replace(',','.')) || 0;
+}
+
+function fmtH(val) {
+  // Format hours from decimal e.g. 28.8 -> 28:48
+  if (!val) return '-';
+  const h = Math.floor(val);
+  const m2 = Math.round((val - h) * 60);
+  return `${h}:${String(m2).padStart(2,'0')}`;
+}
+
+function fmtHQty(qty) {
+  // Parse qty string like "28:48" or "20,00" to decimal hours
+  if (!qty) return 0;
+  const s = String(qty).trim();
+  if (s.includes(':')) {
+    const [h,m2] = s.split(':').map(Number);
+    return h + (m2||0)/60;
+  }
+  return parseBRN(s);
+}
+
+function renderIndicadores() {
+  const folhas = getIndFolhas();
+
+  if (!folhas.length) {
+    document.getElementById('ind-cards').innerHTML =
+      '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted)">Nenhuma folha encontrada no período. Importe PDFs primeiro.</div>';
+    ['ind-abs-mensal','ind-he-mensal','ind-adm-mensal','ind-dem-mensal','ind-afast-detalhe']
+      .forEach(id => { const el=document.getElementById(id); if(el) el.innerHTML='<p style="color:var(--muted);font-size:.85rem">Sem dados.</p>'; });
+    return;
+  }
+
+  // ── Consolidar dados por mês ────────────────────────
+  const mesesNomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const byMes = {};
+
+  folhas.forEach(folha => {
+    const comp = folha.competencia || '';
+    if (!byMes[comp]) byMes[comp] = {
+      comp, empNome: folha.empresaNome || '',
+      totalFunc: 0,
+      admissoes: 0,  // funcionários com admissão no mês
+      demissoes: 0,  // situação Demitido
+      diasAfast8870: 0, valAfast8870: 0, funcsAfast8870: new Set(),
+      diasAfast8813: 0, valAfast8813: 0, funcsAfast8813: new Set(),
+      diasFaltas: 0,    valFaltas: 0,    funcsFaltas: new Set(),
+      diasAtraso: 0,    valAtraso: 0,
+      heTotal: 0,       valHE: 0,       funcsHE: new Set(),
+      salarioTotal: 0,
+      detalheAfast: []
+    };
+
+    const m = byMes[comp];
+    const funcs = folha.funcionarios || [];
+    m.totalFunc = funcs.length;
+
+    funcs.forEach(f => {
+      const rubricas = f.rubricas_detalhe || [];
+      const sal = parseBRN(f.salario);
+      m.salarioTotal += sal;
+
+      // Admissões: admissão no mês da competência
+      if (f.admissao) {
+        const admMes = f.admissao.slice(3,10).split('/').reverse().join('-'); // dd/mm/yyyy -> yyyy-mm
+        if (admMes === comp) m.admissoes++;
+      }
+      // Demissões
+      if (f.situacao === 'Demitido') m.demissoes++;
+
+      rubricas.forEach(r => {
+        const dias = fmtHQty(r.qty);
+        const val  = r.val || 0;
+
+        // 8870 - Afast. Doença
+        if (r.code === '8870') {
+          m.diasAfast8870 += dias; m.valAfast8870 += val;
+          m.funcsAfast8870.add(f.nome);
+          m.detalheAfast.push({ nome:f.nome, cpf:f.cpf||'', depto:f.departamento||'', tipo:'Afast. Doença', codigo:'8870', dias, val });
+        }
+        // 8813 - Bolsa Aux Afastamento
+        if (r.code === '8813') {
+          m.diasAfast8813 += dias; m.valAfast8813 += val;
+          m.funcsAfast8813.add(f.nome);
+          m.detalheAfast.push({ nome:f.nome, cpf:f.cpf||'', depto:f.departamento||'', tipo:'Bolsa Aux Afast.', codigo:'8813', dias, val });
+        }
+        // 246, 8792 - Faltas
+        if (r.code === '246' || r.code === '8792') {
+          m.diasFaltas += dias; m.valFaltas += val;
+          m.funcsFaltas.add(f.nome);
+          m.detalheAfast.push({ nome:f.nome, cpf:f.cpf||'', depto:f.departamento||'', tipo:'Dias Faltas', codigo:r.code, dias, val });
+        }
+        // 245 - Atraso
+        if (r.code === '245') {
+          m.diasAtraso += dias; m.valAtraso += val;
+        }
+        // 211, 209 - Horas Extras
+        if (r.code === '211' || r.code === '209') {
+          m.heTotal += dias; m.valHE += val;
+          m.funcsHE.add(f.nome);
+        }
+      });
+    });
+  });
+
+  const meses = Object.keys(byMes).sort();
+  const dados = meses.map(k => byMes[k]);
+
+  // ── Totais gerais ────────────────────────────────────
+  const gt = {
+    admissoes: dados.reduce((s,d)=>s+d.admissoes,0),
+    demissoes: dados.reduce((s,d)=>s+d.demissoes,0),
+    diasAbs:   dados.reduce((s,d)=>s+d.diasAfast8870+d.diasAfast8813+d.diasFaltas,0),
+    valAbs:    dados.reduce((s,d)=>s+d.valAfast8870+d.valAfast8813+d.valFaltas,0),
+    heTotal:   dados.reduce((s,d)=>s+d.heTotal,0),
+    valHE:     dados.reduce((s,d)=>s+d.valHE,0),
+  };
+
+  // ── Cards ────────────────────────────────────────────
+  const cardStyle = (color) => `background:var(--white);border-radius:10px;border:1px solid var(--border);border-left:4px solid ${color};padding:18px;box-shadow:var(--shadow)`;
+  document.getElementById('ind-cards').innerHTML = `
+    <div style="${cardStyle('var(--teal-dk)')}">
+      <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📄 Folhas Analisadas</div>
+      <div style="font-size:2rem;font-weight:800;color:var(--teal-dk)">${folhas.length}</div>
+      <div style="font-size:.75rem;color:var(--muted);margin-top:4px">${meses.length} competência(s)</div>
+    </div>
+    <div style="${cardStyle('#276749')}">
+      <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">✅ Admissões</div>
+      <div style="font-size:2rem;font-weight:800;color:#276749">${gt.admissoes}</div>
+      <div style="font-size:.75rem;color:var(--muted);margin-top:4px">no período</div>
+    </div>
+    <div style="${cardStyle('var(--danger)')}">
+      <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">❌ Demissões</div>
+      <div style="font-size:2rem;font-weight:800;color:var(--danger)">${gt.demissoes}</div>
+      <div style="font-size:.75rem;color:var(--muted);margin-top:4px">no período</div>
+    </div>
+    <div style="${cardStyle('#744210')}">
+      <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">🏥 Dias de Afastamento/Falta</div>
+      <div style="font-size:2rem;font-weight:800;color:#744210">${gt.diasAbs.toFixed(1)}</div>
+      <div style="font-size:.75rem;color:var(--muted);margin-top:4px">${fmtBRL(gt.valAbs)} em desconto</div>
+    </div>
+    <div style="${cardStyle('#2B6CB0')}">
+      <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">⏰ Horas Extras</div>
+      <div style="font-size:2rem;font-weight:800;color:#2B6CB0">${fmtH(gt.heTotal)}</div>
+      <div style="font-size:.75rem;color:var(--muted);margin-top:4px">${fmtBRL(gt.valHE)}</div>
+    </div>
+  `;
+
+  // ── Helper: mini table ─────────────────────────────
+  const miniTable = (headers, rows, emptyMsg) => {
+    if (!rows.length) return `<p style="color:var(--muted);font-size:.83rem;text-align:center;padding:20px">${emptyMsg}</p>`;
+    return `<table style="width:100%;border-collapse:collapse;font-size:.8rem">
+      <thead><tr>${headers.map(h=>`<th style="padding:7px 10px;background:var(--slate-dk);color:#fff;text-align:${h.right?'right':'left'};font-size:.72rem;white-space:nowrap">${h.label}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map((row,ri)=>`<tr style="border-bottom:1px solid var(--border);background:${ri%2===0?'var(--teal-xlt)':'#fff'}">${row.map((cell,ci)=>`<td style="padding:7px 10px;text-align:${headers[ci]?.right?'right':'left'};${headers[ci]?.bold?'font-weight:700;color:var(--teal-dk)':''}">${cell??'-'}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table>`;
+  };
+
+  const mesLabel = comp => {
+    const [y,m2] = comp.split('-');
+    return mesesNomes[(parseInt(m2)||1)-1]+'/'+y;
+  };
+
+  // ── Absenteísmo mensal ────────────────────────────
+  const absRows = dados.map(d => {
+    const totalDias = d.diasAfast8870 + d.diasAfast8813 + d.diasFaltas;
+    const totalFuncs = d.funcsAfast8870.size + d.funcsAfast8813.size + d.funcsFaltas.size;
+    const taxaAbs = d.totalFunc > 0 ? ((totalFuncs / d.totalFunc) * 100).toFixed(1) : '0.0';
+    return [
+      mesLabel(d.comp),
+      d.totalFunc,
+      d.funcsAfast8870.size || '-',
+      d.diasAfast8870.toFixed(0) || '-',
+      d.funcsAfast8813.size || '-',
+      d.diasAfast8813.toFixed(0) || '-',
+      d.funcsFaltas.size || '-',
+      d.diasFaltas.toFixed(0) || '-',
+      totalDias.toFixed(1),
+      `${taxaAbs}%`
+    ];
+  });
+  document.getElementById('ind-abs-mensal').innerHTML = miniTable([
+    {label:'Mês'},{label:'Total Func.'},{label:'Func. c/ Doença'},{label:'Dias Doença'},{label:'Func. c/ Bolsa Afast.'},{label:'Dias Afast.'},
+    {label:'Func. c/ Faltas'},{label:'Dias Faltas'},{label:'Total Dias',right:true},{label:'Taxa Abs.',right:true}
+  ], absRows, 'Nenhum afastamento registrado.');
+
+  // ── Horas Extras mensal ───────────────────────────
+  const heRows = dados.map(d => [
+    mesLabel(d.comp),
+    d.totalFunc,
+    d.funcsHE.size || '-',
+    d.heTotal > 0 ? fmtH(d.heTotal) : '-',
+    d.valHE > 0 ? fmtBRL(d.valHE) : '-',
+    d.totalFunc > 0 && d.heTotal > 0 ? fmtH(d.heTotal/d.totalFunc) : '-'
+  ]);
+  document.getElementById('ind-he-mensal').innerHTML = miniTable([
+    {label:'Mês'},{label:'Total Func.'},{label:'Func. c/ HE'},{label:'Total HH',right:true},{label:'Valor HE',right:true},{label:'HH/Func.',right:true}
+  ], heRows, 'Nenhuma hora extra registrada.');
+
+  // ── Admissões mensal ──────────────────────────────
+  const admRows = dados.filter(d=>d.admissoes>0).map(d => {
+    const admitidos = (d.comp ? (folhas.find(f=>f.competencia===d.comp)?.funcionarios||[]) : [])
+      .filter(f => f.admissao && f.admissao.slice(3,10).split('/').reverse().join('-') === d.comp);
+    return [
+      mesLabel(d.comp),
+      d.admissoes,
+      admitidos.map(f=>f.nome).join(', ') || '-'
+    ];
+  });
+  document.getElementById('ind-adm-mensal').innerHTML = miniTable([
+    {label:'Mês'},{label:'Admissões',right:true},{label:'Funcionários Admitidos'}
+  ], admRows, 'Nenhuma admissão no período.');
+
+  // ── Demissões mensal ──────────────────────────────
+  const demRows = dados.filter(d=>d.demissoes>0).map(d => [
+    mesLabel(d.comp),
+    d.demissoes,
+    d.totalFunc
+  ]);
+  document.getElementById('ind-dem-mensal').innerHTML = miniTable([
+    {label:'Mês'},{label:'Demissões',right:true},{label:'Total no Mês',right:true}
+  ], demRows, 'Nenhuma demissão no período.');
+
+  // ── Detalhe afastamentos ──────────────────────────
+  const allAfast = dados.flatMap(d => d.detalheAfast.map(a => ({...a, comp: d.comp})));
+  const afastRows = allAfast.map(a => [
+    mesLabel(a.comp),
+    a.nome,
+    a.cpf,
+    a.depto,
+    a.tipo,
+    a.codigo,
+    a.dias.toFixed(0),
+    fmtBRL(a.val)
+  ]);
+  document.getElementById('ind-afast-detalhe').innerHTML = miniTable([
+    {label:'Mês'},{label:'Funcionário',bold:true},{label:'CPF'},{label:'Departamento'},
+    {label:'Tipo'},{label:'Cód.'},{label:'Dias',right:true},{label:'Valor',right:true}
+  ], afastRows, 'Nenhum afastamento/falta no período selecionado.');
+}
+
+function exportarIndicadores() {
+  const folhas = getIndFolhas();
+  if (!folhas.length) { toast('Nenhuma folha no período', 'warn'); return; }
+
+  const mesesNomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const mesLabel = comp => {
+    const [y,m2] = comp.split('-');
+    return (mesesNomes[(parseInt(m2)||1)-1]||'')+'/'+y;
+  };
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  const empId = document.getElementById('ind-empresa')?.value||'';
+  const empresa = DB.empresas.find(e=>e.id===empId);
+  const de  = document.getElementById('ind-de')?.value||'';
+  const ate = document.getElementById('ind-ate')?.value||'';
+
+  // Recalcular dados
+  const byMes = {};
+  folhas.forEach(folha => {
+    const comp = folha.competencia||'';
+    if (!byMes[comp]) byMes[comp] = {
+      comp, admissoes:0, demissoes:0,
+      funcsAfast8870:new Set(), diasAfast8870:0, valAfast8870:0,
+      funcsAfast8813:new Set(), diasAfast8813:0, valAfast8813:0,
+      funcsFaltas:new Set(),    diasFaltas:0,    valFaltas:0,
+      funcsHE:new Set(),        heTotal:0,       valHE:0,
+      totalFunc:0, salarioTotal:0, detalheAfast:[]
+    };
+    const m = byMes[comp];
+    const funcs = folha.funcionarios||[];
+    m.totalFunc = funcs.length;
+    funcs.forEach(f => {
+      const sal = parseBRN(f.salario);
+      m.salarioTotal += sal;
+      if (f.admissao) {
+        const admMes = f.admissao.slice(3,10).split('/').reverse().join('-');
+        if (admMes===comp) m.admissoes++;
+      }
+      if (f.situacao==='Demitido') m.demissoes++;
+      (f.rubricas_detalhe||[]).forEach(r => {
+        const dias = fmtHQty(r.qty), val = r.val||0;
+        if (r.code==='8870')            { m.diasAfast8870+=dias;m.valAfast8870+=val;m.funcsAfast8870.add(f.nome);m.detalheAfast.push({nome:f.nome,cpf:f.cpf||'',depto:f.departamento||'',tipo:'Afast. Doença',codigo:'8870',dias,val}); }
+        if (r.code==='8813')            { m.diasAfast8813+=dias;m.valAfast8813+=val;m.funcsAfast8813.add(f.nome);m.detalheAfast.push({nome:f.nome,cpf:f.cpf||'',depto:f.departamento||'',tipo:'Bolsa Aux Afast.',codigo:'8813',dias,val}); }
+        if (r.code==='246'||r.code==='8792') { m.diasFaltas+=dias;m.valFaltas+=val;m.funcsFaltas.add(f.nome);m.detalheAfast.push({nome:f.nome,cpf:f.cpf||'',depto:f.departamento||'',tipo:'Dias Faltas',codigo:r.code,dias,val}); }
+        if (r.code==='211'||r.code==='209') { m.heTotal+=dias;m.valHE+=val;m.funcsHE.add(f.nome); }
+      });
+    });
+  });
+
+  const meses = Object.keys(byMes).sort();
+  const dados = meses.map(k => byMes[k]);
+
+  const wb = XLSX.utils.book_new();
+  const C = { TEAL_DK:'2C7A72', TEAL_LT:'E8F5F4', SLATE:'4A5A72', WHITE:'FFFFFF', TEXT:'2D3748',
+    TOTAL:'1A4A45', TEAL_XLT:'F4FAFA', WARN:'744210', DOENC:'991B1B', BOLSA:'2B6CB0' };
+  const brd = (s,c) => ({top:{style:s,color:{rgb:c}},bottom:{style:s,color:{rgb:c}},left:{style:s,color:{rgb:c}},right:{style:s,color:{rgb:c}}});
+  const sty = (bold,bg,fg,align,sz,wrap) => ({font:{bold:!!bold,color:{rgb:fg||'FFFFFF'},sz:sz||9,name:'Calibri'},fill:{fgColor:{rgb:bg||C.TEAL_DK},patternType:'solid'},alignment:{horizontal:align||'center',vertical:'center',wrapText:!!wrap},border:brd('thin','CBD5E0')});
+  const h = (bg,fg,align,bold,sz) => ({font:{bold:!!bold,color:{rgb:fg||C.TEXT},sz:sz||9,name:'Calibri'},fill:{fgColor:{rgb:bg||C.WHITE},patternType:'solid'},alignment:{horizontal:align||'left',vertical:'center'},border:brd('hair','D1DDE6')});
+
+  const buildSheet = (rows, metas, colWidths, sheetName) => {
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = colWidths;
+    ws['!rows'] = rows.map((_,i)=>{ const m=metas[i]; return m==='title'?{hpt:28}:m==='sub'?{hpt:16}:m==='hdr'?{hpt:24}:m==='total'?{hpt:22}:m==='space'?{hpt:5}:{hpt:15}; });
+    ws['!merges'] = [{s:{r:0,c:0},e:{r:0,c:colWidths.length-1}},{s:{r:1,c:0},e:{r:1,c:colWidths.length-1}}];
+    rows.forEach((_,ri)=>{ if (metas[ri]==='total'||metas[ri]==='mes') ws['!merges'].push({s:{r:ri,c:0},e:{r:ri,c:0}}); });
+    rows.forEach((row,ri) => {
+      const m = metas[ri]; if (m==='space') return;
+      row.forEach((_,ci) => {
+        const addr = XLSX.utils.encode_cell({r:ri,c:ci});
+        if (!ws[addr]) ws[addr]={t:'s',v:''};
+        const cell=ws[addr]; const val=cell.v; const isNum=typeof val==='number';
+        if (m==='title') cell.s=sty(true,C.TEAL_DK,'FFFFFF','left',14);
+        else if (m==='sub') cell.s=sty(false,C.TEAL_LT,C.TEAL_DK,'left',9);
+        else if (m==='hdr') cell.s=sty(true,C.SLATE,'FFFFFF','center',9,true);
+        else if (m==='mes') cell.s=sty(true,C.TEAL_DK,'FFFFFF','left',10);
+        else if (m==='total') { cell.s=sty(true,C.TOTAL,'FFFFFF',isNum?'right':'left',10); if(isNum&&val) cell.s.numFmt=ci>1?'R$ #,##0.00':'#,##0'; }
+        else { const even=ri%2===0; cell.s=h(even?C.TEAL_XLT:C.WHITE,C.TEXT,isNum?'right':'left',false,9); if(isNum&&val) cell.s.numFmt=ci>1?'R$ #,##0.00':'#,##0'; }
+      });
+    });
+    XLSX.utils.book_append_sheet(wb, fixCellTypes(ws), sheetName);
+  };
+
+  const empInfo = empresa?.razao||'TODAS'; const periodo = de&&ate?de+' a '+ate:(de||ate||'todo período');
+
+  // ABA 1 - Absenteísmo
+  const rows1=[],m1=[];
+  const R1=(d,m)=>{rows1.push(d);m1.push(m);};
+  R1(['EQUILIBRYM — INDICADORES DE ABSENTEÍSMO'],'title');
+  R1([`Empresa: ${empInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
+  R1([],'space');
+  R1(['MÊS','TOTAL FUNC.','FUNC. DOENÇA','DIAS DOENÇA','FUNC. AFAST.','DIAS AFAST.','FUNC. FALTAS','DIAS FALTAS','TOTAL DIAS ABS','TAXA ABSENTEÍSMO'],'hdr');
+  let gt1={tf:0,fd:0,dd:0,fa:0,da:0,ff:0,df2:0,tot:0};
+  dados.forEach((d,i)=>{
+    const tot=d.diasAfast8870+d.diasAfast8813+d.diasFaltas;
+    const taxa=d.totalFunc>0?((d.funcsAfast8870.size+d.funcsAfast8813.size+d.funcsFaltas.size)/d.totalFunc*100):0;
+    R1([mesLabel(d.comp),d.totalFunc,d.funcsAfast8870.size||null,d.diasAfast8870||null,d.funcsAfast8813.size||null,d.diasAfast8813||null,d.funcsFaltas.size||null,d.diasFaltas||null,tot||null,taxa?parseFloat(taxa.toFixed(1)):null],i%2===0?'even':'odd');
+    gt1.tf=Math.max(gt1.tf,d.totalFunc);gt1.fd+=d.funcsAfast8870.size;gt1.dd+=d.diasAfast8870;gt1.fa+=d.funcsAfast8813.size;gt1.da+=d.diasAfast8813;gt1.ff+=d.funcsFaltas.size;gt1.df2+=d.diasFaltas;gt1.tot+=tot;
+  });
+  R1([],'space');
+  R1(['TOTAL GERAL','',gt1.fd||null,gt1.dd||null,gt1.fa||null,gt1.da||null,gt1.ff||null,gt1.df2||null,gt1.tot||null,null],'total');
+  buildSheet(rows1,m1,[{wch:12},{wch:11},{wch:13},{wch:12},{wch:13},{wch:12},{wch:13},{wch:12},{wch:14},{wch:16}],'📉 Absenteísmo');
+
+  // ABA 2 - Horas Extras
+  const rows2=[],m2=[];
+  const R2=(d,m)=>{rows2.push(d);m2.push(m);};
+  R2(['EQUILIBRYM — INDICADORES DE HORAS EXTRAS'],'title');
+  R2([`Empresa: ${empInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
+  R2([],'space');
+  R2(['MÊS','TOTAL FUNC.','FUNC. C/ HE','TOTAL HORAS','VALOR PAGO (R$)','MÉDIA HH/FUNC.'],'hdr');
+  let gt2={fhe:0,ht:0,vhe:0};
+  dados.forEach((d,i)=>{
+    const media=d.totalFunc>0&&d.heTotal>0?(d.heTotal/d.totalFunc):null;
+    R2([mesLabel(d.comp),d.totalFunc,d.funcsHE.size||null,d.heTotal||null,d.valHE||null,media?parseFloat(media.toFixed(2)):null],i%2===0?'even':'odd');
+    gt2.fhe+=d.funcsHE.size;gt2.ht+=d.heTotal;gt2.vhe+=d.valHE;
+  });
+  R2([],'space');
+  R2(['TOTAL GERAL','',gt2.fhe||null,gt2.ht||null,gt2.vhe||null,null],'total');
+  buildSheet(rows2,m2,[{wch:12},{wch:11},{wch:12},{wch:13},{wch:16},{wch:14}],'⏰ Horas Extras');
+
+  // ABA 3 - Admissões e Demissões
+  const rows3=[],m3=[];
+  const R3=(d,m)=>{rows3.push(d);m3.push(m);};
+  R3(['EQUILIBRYM — ADMISSÕES E DEMISSÕES'],'title');
+  R3([`Empresa: ${empInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
+  R3([],'space');
+  R3(['MÊS','TOTAL FUNC.','ADMISSÕES','DEMISSÕES','SALDO'],'hdr');
+  let gt3={adm:0,dem:0};
+  dados.forEach((d,i)=>{
+    R3([mesLabel(d.comp),d.totalFunc,d.admissoes||null,d.demissoes||null,(d.admissoes-d.demissoes)||null],i%2===0?'even':'odd');
+    gt3.adm+=d.admissoes;gt3.dem+=d.demissoes;
+  });
+  R3([],'space');
+  R3(['TOTAL GERAL','',gt3.adm||null,gt3.dem||null,(gt3.adm-gt3.dem)||null],'total');
+  buildSheet(rows3,m3,[{wch:12},{wch:11},{wch:12},{wch:12},{wch:10}],'👥 Adm. e Dem.');
+
+  // ABA 4 - Detalhe afastamentos
+  const rows4=[],m4=[];
+  const R4=(d,m)=>{rows4.push(d);m4.push(m);};
+  R4(['EQUILIBRYM — DETALHE DE AFASTAMENTOS E FALTAS'],'title');
+  R4([`Empresa: ${empInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
+  R4([],'space');
+  R4(['MÊS','FUNCIONÁRIO','CPF','DEPARTAMENTO','TIPO','CÓDIGO','DIAS','VALOR (R$)'],'hdr');
+  let ri4=0;
+  dados.forEach(d=>{
+    d.detalheAfast.forEach(a=>{
+      R4([mesLabel(d.comp),a.nome,a.cpf,a.depto,a.tipo,a.codigo,a.dias||null,a.val||null],ri4++%2===0?'even':'odd');
+    });
+  });
+  if (!ri4) R4(['Nenhum afastamento no período'],'sub');
+  buildSheet(rows4,m4,[{wch:12},{wch:32},{wch:16},{wch:20},{wch:20},{wch:7},{wch:8},{wch:13}],'🏥 Detalhe Afastamentos');
+
+  const fname='Indicadores_RH_'+(empresa?.razao||'todas').replace(/\s+/g,'_').substring(0,20)+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
+  XLSX.writeFile(wb, fname);
+  toast('Indicadores exportados! '+folhas.length+' folha(s).');
+}
+
+
 // BACKUP
 // ═══════════════════════════════════════════════════════
 function exportBackup() {
