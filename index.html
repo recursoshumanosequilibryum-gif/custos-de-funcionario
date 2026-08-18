@@ -562,7 +562,10 @@
       <div class="card-body" style="padding:14px 18px">
         <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
           <div class="fg"><label>Empresa</label>
-            <select id="ind-empresa" onchange="renderIndicadores()"><option value="">Todas</option></select>
+            <select id="ind-empresa" onchange="updateIndDeptos();renderIndicadores()"><option value="">Todas</option></select>
+          </div>
+          <div class="fg"><label>Departamento</label>
+            <select id="ind-depto" onchange="renderIndicadores()"><option value="">Todos</option></select>
           </div>
           <div class="fg"><label>De</label>
             <input type="month" id="ind-de" onchange="renderIndicadores()">
@@ -4399,6 +4402,27 @@ function confirmarZerarBeneficios() {
 // INDICADORES DE RH
 // ═══════════════════════════════════════════════════════
 
+function updateIndDeptos() {
+  const empId = document.getElementById('ind-empresa')?.value || '';
+  // Buscar deptos das folhas importadas para a empresa selecionada
+  const deptosSet = new Set();
+  (DB.folhas || []).forEach(f => {
+    if (empId && f.empresaId !== empId) return;
+    (f.funcionarios || []).forEach(func => {
+      if (func.departamento) deptosSet.add(func.departamento);
+    });
+  });
+  // Também do cadastro de departamentos
+  DB.departamentos.filter(d => !empId || d.empresaId === empId)
+    .forEach(d => deptosSet.add(d.nome));
+
+  const el = document.getElementById('ind-depto');
+  if (el) {
+    el.innerHTML = '<option value="">Todos</option>' +
+      [...deptosSet].sort().map(d => `<option value="${d}">${d}</option>`).join('');
+  }
+}
+
 function initIndicadores() {
   // Popular select de empresa
   const sel = document.getElementById('ind-empresa');
@@ -4406,6 +4430,7 @@ function initIndicadores() {
     sel.innerHTML = '<option value="">Todas</option>' +
       DB.empresas.map(e => `<option value="${e.id}">${e.razao}</option>`).join('');
   }
+  updateIndDeptos();
   // Período padrão: últimos 6 meses
   const de  = document.getElementById('ind-de');
   const ate = document.getElementById('ind-ate');
@@ -4421,14 +4446,26 @@ function initIndicadores() {
 
 function getIndFolhas() {
   const empId = document.getElementById('ind-empresa')?.value || '';
-  const de    = document.getElementById('ind-de')?.value    || '';
-  const ate   = document.getElementById('ind-ate')?.value   || '';
+  const depto = document.getElementById('ind-depto')?.value  || '';
+  const de    = document.getElementById('ind-de')?.value     || '';
+  const ate   = document.getElementById('ind-ate')?.value    || '';
+
   return (DB.folhas || []).filter(f => {
     if (empId && f.empresaId !== empId) return false;
     if (de    && (f.competencia||'') < de)  return false;
     if (ate   && (f.competencia||'') > ate) return false;
     return true;
-  }).sort((a,b) => (a.competencia||'').localeCompare(b.competencia||''));
+  }).map(f => {
+    // Se filtrou por depto, filtrar funcionários dentro da folha
+    if (!depto) return f;
+    return {
+      ...f,
+      funcionarios: (f.funcionarios || []).filter(func =>
+        (func.departamento || '').toUpperCase() === depto.toUpperCase()
+      )
+    };
+  }).filter(f => !depto || (f.funcionarios && f.funcionarios.length > 0))
+    .sort((a,b) => (a.competencia||'').localeCompare(b.competencia||''));
 }
 
 function parseBRN(v) {
@@ -4689,6 +4726,7 @@ function exportarIndicadores() {
   };
   const hoje = new Date().toLocaleDateString('pt-BR');
   const empId = document.getElementById('ind-empresa')?.value||'';
+  const depto = document.getElementById('ind-depto')?.value||'';
   const empresa = DB.empresas.find(e=>e.id===empId);
   const de  = document.getElementById('ind-de')?.value||'';
   const ate = document.getElementById('ind-ate')?.value||'';
@@ -4706,7 +4744,10 @@ function exportarIndicadores() {
       totalFunc:0, salarioTotal:0, detalheAfast:[]
     };
     const m = byMes[comp];
-    const funcs = folha.funcionarios||[];
+    // Filtrar por departamento se selecionado
+    const funcs = (folha.funcionarios||[]).filter(f =>
+      !depto || (f.departamento||'').toUpperCase() === depto.toUpperCase()
+    );
     m.totalFunc = funcs.length;
     funcs.forEach(f => {
       const sal = parseBRN(f.salario);
@@ -4759,13 +4800,15 @@ function exportarIndicadores() {
     XLSX.utils.book_append_sheet(wb, fixCellTypes(ws), sheetName);
   };
 
-  const empInfo = empresa?.razao||'TODAS'; const periodo = de&&ate?de+' a '+ate:(de||ate||'todo período');
+  const empInfo  = empresa?.razao||'TODAS';
+  const deptInfo = depto ? ' | Depto: '+depto : '';
+  const periodo  = de&&ate?de+' a '+ate:(de||ate||'todo período');
 
   // ABA 1 - Absenteísmo
   const rows1=[],m1=[];
   const R1=(d,m)=>{rows1.push(d);m1.push(m);};
   R1(['EQUILIBRYM — INDICADORES DE ABSENTEÍSMO'],'title');
-  R1([`Empresa: ${empInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
+  R1([`Empresa: ${empInfo}${deptInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
   R1([],'space');
   R1(['MÊS','TOTAL FUNC.','FUNC. DOENÇA','DIAS DOENÇA','FUNC. AFAST.','DIAS AFAST.','FUNC. FALTAS','DIAS FALTAS','TOTAL DIAS ABS','TAXA ABSENTEÍSMO'],'hdr');
   let gt1={tf:0,fd:0,dd:0,fa:0,da:0,ff:0,df2:0,tot:0};
@@ -4783,7 +4826,7 @@ function exportarIndicadores() {
   const rows2=[],m2=[];
   const R2=(d,m)=>{rows2.push(d);m2.push(m);};
   R2(['EQUILIBRYM — INDICADORES DE HORAS EXTRAS'],'title');
-  R2([`Empresa: ${empInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
+  R2([`Empresa: ${empInfo}${deptInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
   R2([],'space');
   R2(['MÊS','TOTAL FUNC.','FUNC. C/ HE','TOTAL HORAS','VALOR PAGO (R$)','MÉDIA HH/FUNC.'],'hdr');
   let gt2={fhe:0,ht:0,vhe:0};
@@ -4800,7 +4843,7 @@ function exportarIndicadores() {
   const rows3=[],m3=[];
   const R3=(d,m)=>{rows3.push(d);m3.push(m);};
   R3(['EQUILIBRYM — ADMISSÕES E DEMISSÕES'],'title');
-  R3([`Empresa: ${empInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
+  R3([`Empresa: ${empInfo}${deptInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
   R3([],'space');
   R3(['MÊS','TOTAL FUNC.','ADMISSÕES','DEMISSÕES','SALDO'],'hdr');
   let gt3={adm:0,dem:0};
@@ -4816,7 +4859,7 @@ function exportarIndicadores() {
   const rows4=[],m4=[];
   const R4=(d,m)=>{rows4.push(d);m4.push(m);};
   R4(['EQUILIBRYM — DETALHE DE AFASTAMENTOS E FALTAS'],'title');
-  R4([`Empresa: ${empInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
+  R4([`Empresa: ${empInfo}${deptInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
   R4([],'space');
   R4(['MÊS','FUNCIONÁRIO','CPF','DEPARTAMENTO','TIPO','CÓDIGO','DIAS','VALOR (R$)'],'hdr');
   let ri4=0;
