@@ -4806,72 +4806,189 @@ function exportarIndicadores() {
   const deptInfo = depto ? ' | Depto: '+depto : '';
   const periodo  = de&&ate?de+' a '+ate:(de||ate||'todo período');
 
-  // ABA 1 - Absenteísmo
+  // ── Formatação por coluna por aba ─────────────────────────────
+  // Usamos uma versão estendida do buildSheet que aceita array de formatos por coluna
+  const buildSheetFmt = (rows, metas, colWidths, colFmts, sheetName) => {
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = colWidths;
+    ws['!rows'] = rows.map((_,i)=>{
+      const m=metas[i];
+      return m==='title'?{hpt:28}:m==='sub'?{hpt:16}:m==='hdr'?{hpt:26}:
+             m==='total'?{hpt:22}:m==='space'?{hpt:5}:{hpt:16};
+    });
+    ws['!merges'] = [
+      {s:{r:0,c:0},e:{r:0,c:colWidths.length-1}},
+      {s:{r:1,c:0},e:{r:1,c:colWidths.length-1}}
+    ];
+    rows.forEach((_,ri)=>{
+      if (metas[ri]==='total') ws['!merges'].push({s:{r:ri,c:0},e:{r:ri,c:1}});
+    });
+
+    rows.forEach((row,ri) => {
+      const m = metas[ri]; if (m==='space') return;
+      row.forEach((_,ci) => {
+        const addr = XLSX.utils.encode_cell({r:ri,c:ci});
+        if (!ws[addr]) ws[addr]={t:'s',v:''};
+        const cell=ws[addr]; const val=cell.v;
+        const isNum = typeof val==='number';
+        const fmt = colFmts[ci] || null; // formato específico para esta coluna
+
+        const brdThin = {top:{style:'thin',color:{rgb:'CBD5E0'}},bottom:{style:'thin',color:{rgb:'CBD5E0'}},left:{style:'thin',color:{rgb:'CBD5E0'}},right:{style:'thin',color:{rgb:'CBD5E0'}}};
+        const brdHair = {top:{style:'hair',color:{rgb:'D1DDE6'}},bottom:{style:'hair',color:{rgb:'D1DDE6'}},left:{style:'hair',color:{rgb:'D1DDE6'}},right:{style:'hair',color:{rgb:'D1DDE6'}}};
+
+        if (m==='title') {
+          cell.s={font:{bold:true,color:{rgb:'FFFFFF'},sz:14,name:'Calibri'},fill:{fgColor:{rgb:C.TEAL_DK},patternType:'solid'},alignment:{horizontal:'left',vertical:'center'}};
+        } else if (m==='sub') {
+          cell.s={font:{color:{rgb:C.TEAL_DK},sz:9,name:'Calibri'},fill:{fgColor:{rgb:C.TEAL_LT},patternType:'solid'},alignment:{horizontal:'left',vertical:'center'}};
+        } else if (m==='hdr') {
+          cell.s={font:{bold:true,color:{rgb:'FFFFFF'},sz:9,name:'Calibri'},fill:{fgColor:{rgb:C.SLATE},patternType:'solid'},alignment:{horizontal:'center',vertical:'center',wrapText:true},border:brdThin};
+        } else if (m==='total') {
+          cell.s={font:{bold:true,color:{rgb:'FFFFFF'},sz:10,name:'Calibri'},fill:{fgColor:{rgb:C.TOTAL},patternType:'solid'},alignment:{horizontal:isNum?'right':'left',vertical:'center'},border:brdThin};
+          if (isNum && val && fmt) cell.s.numFmt = fmt;
+        } else {
+          const even = ri%2===0;
+          const isName = ci===1 && typeof val==='string' && val.length>3;
+          cell.s={
+            font:{bold:isName,color:{rgb:isName?C.TEAL_DK:C.TEXT},sz:9,name:'Calibri'},
+            fill:{fgColor:{rgb:even?C.TEAL_XLT:C.WHITE},patternType:'solid'},
+            alignment:{horizontal:isNum?'right':(ci===0?'center':'left'),vertical:'center'},
+            border:brdHair
+          };
+          if (isNum && val && fmt) cell.s.numFmt = fmt;
+        }
+      });
+    });
+    XLSX.utils.book_append_sheet(wb, fixCellTypes(ws), sheetName);
+  };
+
+  // Formatos: null=texto, '#,##0'=número inteiro, '#,##0.00'=decimal, 'R$ #,##0.00'=moeda, '0.0"%"'=percentual
+  const NUM   = '#,##0';
+  const DEC   = '#,##0.0';
+  const BRL   = 'R$ #,##0.00';
+  const PCT   = '0.0"%"';
+
+  // ── ABA 1 — ABSENTEÍSMO ──────────────────────────────────────
+  // Cols: Mês | Total Func | Func Doença | Dias Doença | Func Afast | Dias Afast | Func Faltas | Dias Faltas | Total Dias | Taxa %
+  const fmts1 = [null, NUM, NUM, DEC, NUM, DEC, NUM, DEC, DEC, PCT];
   const rows1=[],m1=[];
   const R1=(d,m)=>{rows1.push(d);m1.push(m);};
   R1(['EQUILIBRYM — INDICADORES DE ABSENTEÍSMO'],'title');
   R1([`Empresa: ${empInfo}${deptInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
   R1([],'space');
-  R1(['MÊS','TOTAL FUNC.','FUNC. DOENÇA','DIAS DOENÇA','FUNC. AFAST.','DIAS AFAST.','FUNC. FALTAS','DIAS FALTAS','TOTAL DIAS ABS','TAXA ABSENTEÍSMO'],'hdr');
-  let gt1={tf:0,fd:0,dd:0,fa:0,da:0,ff:0,df2:0,tot:0};
+  R1(['MÊS','TOTAL\nFUNC.','FUNC.\nDOENÇA','DIAS\nDOENÇA','FUNC.\nAFAST.','DIAS\nAFAST.','FUNC.\nFALTAS','DIAS\nFALTAS','TOTAL\nDIAS ABS.','TAXA\nABS. %'],'hdr');
+  let gt1={fd:0,dd:0,fa:0,da:0,ff:0,df2:0,tot:0};
   dados.forEach((d,i)=>{
     const tot=d.diasAfast8870+d.diasAfast8813+d.diasFaltas;
-    const taxa=d.totalFunc>0?((d.funcsAfast8870.size+d.funcsAfast8813.size+d.funcsFaltas.size)/d.totalFunc*100):0;
-    R1([mesLabel(d.comp),d.totalFunc,d.funcsAfast8870.size||null,d.diasAfast8870||null,d.funcsAfast8813.size||null,d.diasAfast8813||null,d.funcsFaltas.size||null,d.diasFaltas||null,tot||null,taxa?parseFloat(taxa.toFixed(1)):null],i%2===0?'even':'odd');
-    gt1.tf=Math.max(gt1.tf,d.totalFunc);gt1.fd+=d.funcsAfast8870.size;gt1.dd+=d.diasAfast8870;gt1.fa+=d.funcsAfast8813.size;gt1.da+=d.diasAfast8813;gt1.ff+=d.funcsFaltas.size;gt1.df2+=d.diasFaltas;gt1.tot+=tot;
+    const nFuncsAbs=d.funcsAfast8870.size+d.funcsAfast8813.size+d.funcsFaltas.size;
+    const taxa=d.totalFunc>0?(nFuncsAbs/d.totalFunc*100):0;
+    R1([
+      mesLabel(d.comp),
+      d.totalFunc||null,
+      d.funcsAfast8870.size||null,
+      d.diasAfast8870||null,
+      d.funcsAfast8813.size||null,
+      d.diasAfast8813||null,
+      d.funcsFaltas.size||null,
+      d.diasFaltas||null,
+      tot||null,
+      taxa?parseFloat(taxa.toFixed(1)):null
+    ],i%2===0?'even':'odd');
+    gt1.fd+=d.funcsAfast8870.size;gt1.dd+=d.diasAfast8870;
+    gt1.fa+=d.funcsAfast8813.size;gt1.da+=d.diasAfast8813;
+    gt1.ff+=d.funcsFaltas.size;gt1.df2+=d.diasFaltas;gt1.tot+=tot;
   });
   R1([],'space');
   R1(['TOTAL GERAL','',gt1.fd||null,gt1.dd||null,gt1.fa||null,gt1.da||null,gt1.ff||null,gt1.df2||null,gt1.tot||null,null],'total');
-  buildSheet(rows1,m1,[{wch:12},{wch:11},{wch:13},{wch:12},{wch:13},{wch:12},{wch:13},{wch:12},{wch:14},{wch:16}],'📉 Absenteísmo');
+  buildSheetFmt(rows1,m1,
+    [{wch:12},{wch:9},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:10},{wch:12},{wch:10}],
+    fmts1,'📉 Absenteísmo');
 
-  // ABA 2 - Horas Extras
+  // ── ABA 2 — HORAS EXTRAS ────────────────────────────────────
+  // Cols: Mês | Total Func | Func c/ HE | Total HH | Valor Pago | Média HH/Func | Valor Médio/Func
+  const fmts2 = [null, NUM, NUM, DEC, BRL, DEC, BRL];
   const rows2=[],m2=[];
   const R2=(d,m)=>{rows2.push(d);m2.push(m);};
   R2(['EQUILIBRYM — INDICADORES DE HORAS EXTRAS'],'title');
   R2([`Empresa: ${empInfo}${deptInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
   R2([],'space');
-  R2(['MÊS','TOTAL FUNC.','FUNC. C/ HE','TOTAL HORAS','VALOR PAGO (R$)','MÉDIA HH/FUNC.'],'hdr');
+  R2(['MÊS','TOTAL\nFUNC.','FUNC. C/\nHE','TOTAL\nHORAS','VALOR PAGO\n(R$)','MÉDIA\nHH/FUNC.','VALOR MÉDIO\nPOR FUNC.'],'hdr');
   let gt2={fhe:0,ht:0,vhe:0};
   dados.forEach((d,i)=>{
-    const media=d.totalFunc>0&&d.heTotal>0?(d.heTotal/d.totalFunc):null;
-    R2([mesLabel(d.comp),d.totalFunc,d.funcsHE.size||null,d.heTotal||null,d.valHE||null,media?parseFloat(media.toFixed(2)):null],i%2===0?'even':'odd');
+    const mediaHH  = d.funcsHE.size>0 ? d.heTotal/d.funcsHE.size : null;
+    const mediaVal = d.funcsHE.size>0 ? d.valHE/d.funcsHE.size   : null;
+    R2([
+      mesLabel(d.comp),
+      d.totalFunc||null,
+      d.funcsHE.size||null,
+      d.heTotal||null,
+      d.valHE||null,
+      mediaHH  ? parseFloat(mediaHH.toFixed(2))  : null,
+      mediaVal ? parseFloat(mediaVal.toFixed(2))  : null
+    ],i%2===0?'even':'odd');
     gt2.fhe+=d.funcsHE.size;gt2.ht+=d.heTotal;gt2.vhe+=d.valHE;
   });
   R2([],'space');
-  R2(['TOTAL GERAL','',gt2.fhe||null,gt2.ht||null,gt2.vhe||null,null],'total');
-  buildSheet(rows2,m2,[{wch:12},{wch:11},{wch:12},{wch:13},{wch:16},{wch:14}],'⏰ Horas Extras');
+  const mediaHHGt  = gt2.fhe>0 ? gt2.ht/gt2.fhe : null;
+  const mediaValGt = gt2.fhe>0 ? gt2.vhe/gt2.fhe : null;
+  R2(['TOTAL GERAL','',gt2.fhe||null,gt2.ht||null,gt2.vhe||null,
+      mediaHHGt?parseFloat(mediaHHGt.toFixed(2)):null,
+      mediaValGt?parseFloat(mediaValGt.toFixed(2)):null],'total');
+  buildSheetFmt(rows2,m2,
+    [{wch:12},{wch:9},{wch:10},{wch:12},{wch:16},{wch:12},{wch:16}],
+    fmts2,'⏰ Horas Extras');
 
-  // ABA 3 - Admissões e Demissões
+  // ── ABA 3 — ADMISSÕES E DEMISSÕES ───────────────────────────
+  // Cols: Mês | Total Func | Admissões | Demissões | Saldo
+  const fmts3 = [null, NUM, NUM, NUM, NUM];
   const rows3=[],m3=[];
   const R3=(d,m)=>{rows3.push(d);m3.push(m);};
   R3(['EQUILIBRYM — ADMISSÕES E DEMISSÕES'],'title');
   R3([`Empresa: ${empInfo}${deptInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
   R3([],'space');
-  R3(['MÊS','TOTAL FUNC.','ADMISSÕES','DEMISSÕES','SALDO'],'hdr');
+  R3(['MÊS','TOTAL\nFUNC.','ADMISSÕES','DEMISSÕES','SALDO\n(Adm - Dem)'],'hdr');
   let gt3={adm:0,dem:0};
   dados.forEach((d,i)=>{
-    R3([mesLabel(d.comp),d.totalFunc,d.admissoes||null,d.demissoes||null,(d.admissoes-d.demissoes)||null],i%2===0?'even':'odd');
+    const saldo = d.admissoes - d.demissoes;
+    R3([
+      mesLabel(d.comp),
+      d.totalFunc||null,
+      d.admissoes||null,
+      d.demissoes||null,
+      saldo||null
+    ],i%2===0?'even':'odd');
     gt3.adm+=d.admissoes;gt3.dem+=d.demissoes;
   });
   R3([],'space');
   R3(['TOTAL GERAL','',gt3.adm||null,gt3.dem||null,(gt3.adm-gt3.dem)||null],'total');
-  buildSheet(rows3,m3,[{wch:12},{wch:11},{wch:12},{wch:12},{wch:10}],'👥 Adm. e Dem.');
+  buildSheetFmt(rows3,m3,
+    [{wch:12},{wch:9},{wch:12},{wch:12},{wch:14}],
+    fmts3,'👥 Adm. e Dem.');
 
-  // ABA 4 - Detalhe afastamentos
+  // ── ABA 4 — DETALHE DE AFASTAMENTOS ─────────────────────────
+  // Cols: Mês | Funcionário | CPF | Departamento | Tipo | Código | Dias | Valor R$
+  const fmts4 = [null, null, null, null, null, null, DEC, BRL];
   const rows4=[],m4=[];
   const R4=(d,m)=>{rows4.push(d);m4.push(m);};
   R4(['EQUILIBRYM — DETALHE DE AFASTAMENTOS E FALTAS'],'title');
   R4([`Empresa: ${empInfo}${deptInfo}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
   R4([],'space');
-  R4(['MÊS','FUNCIONÁRIO','CPF','DEPARTAMENTO','TIPO','CÓDIGO','DIAS','VALOR (R$)'],'hdr');
-  let ri4=0;
+  R4(['MÊS','FUNCIONÁRIO','CPF','DEPARTAMENTO','TIPO DE AFASTAMENTO','CÓD.','DIAS','VALOR (R$)'],'hdr');
+  let ri4=0,totDias4=0,totVal4=0;
   dados.forEach(d=>{
     d.detalheAfast.forEach(a=>{
-      R4([mesLabel(d.comp),a.nome,a.cpf,a.depto,a.tipo,a.codigo,a.dias||null,a.val||null],ri4++%2===0?'even':'odd');
+      R4([mesLabel(d.comp),a.nome,a.cpf,a.depto,a.tipo,a.codigo,
+          a.dias?parseFloat(a.dias.toFixed(1)):null,
+          a.val||null],ri4++%2===0?'even':'odd');
+      totDias4+=a.dias||0; totVal4+=a.val||0;
     });
   });
-  if (!ri4) R4(['Nenhum afastamento no período'],'sub');
-  buildSheet(rows4,m4,[{wch:12},{wch:32},{wch:16},{wch:20},{wch:20},{wch:7},{wch:8},{wch:13}],'🏥 Detalhe Afastamentos');
+  if (!ri4) R4(['Nenhum afastamento/falta no período selecionado'],'sub');
+  R4([],'space');
+  if (ri4) R4(['TOTAL GERAL','','','','','',
+    parseFloat(totDias4.toFixed(1))||null, totVal4||null],'total');
+  buildSheetFmt(rows4,m4,
+    [{wch:12},{wch:32},{wch:16},{wch:22},{wch:28},{wch:7},{wch:9},{wch:14}],
+    fmts4,'🏥 Detalhe Afastamentos');
 
   const fname='Indicadores_RH_'+(empresa?.razao||'todas').replace(/\s+/g,'_').substring(0,20)+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
   XLSX.writeFile(wb, fname);
