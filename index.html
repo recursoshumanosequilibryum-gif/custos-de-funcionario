@@ -1070,6 +1070,8 @@ function showPage(id) {
   if (id === 'exportar') { populateExpFilters(); setTimeout(updateExportHint, 100); }
   if (id === 'importar-pdf') { populatePdfSelects(); renderFolhasHistorico(); }
   if (id === 'importar-rubricas') { populateRubricaSelects(); renderRubricasHistorico(); }
+  if (id === 'indicadores') { initIndicadores(); }
+  if (id === 'config') { loadConfigForm(); }
 }
 
 // ═══════════════════════════════════════════════════════
