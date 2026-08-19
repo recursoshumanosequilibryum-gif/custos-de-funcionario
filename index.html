@@ -6630,12 +6630,252 @@ function exportarEvolucaoPPT() {
   };
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, buildEvoSheet('custo',  'Custo',   true),  '💰 Custo por '+( porDepto?'Depto':'Unidade'));
+  XLSX.utils.book_append_sheet(wb, buildEvoSheet('custo',  'Custo',   true),  '💰 Custo por '+(porDepto?'Depto':'Unidade'));
   XLSX.utils.book_append_sheet(wb, buildEvoSheet('pessoas','Pessoas', false), '👥 Pessoas por '+(porDepto?'Depto':'Unidade'));
 
-  const fname = 'Evolucao_'+(porDepto?'Departamentos':'Unidades')+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
+  // ── ABA 3: Desligamentos por Empresa ─────────────────────────
+  // ── ABA 4: Desligamentos por Departamento ─────────────────────
+
+  // Coletar dados de demissões
+  const pBRE = v => {
+    if (!v && v !== 0) return 0;
+    const s = String(v).trim(); if (!s || s === '0') return 0;
+    if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
+    return parseFloat(s) || 0;
+  };
+  const cadDepE = {};
+  DB.funcionarios.forEach(f => {
+    if (!f.departamento) return;
+    const k = (f.cpf||'').replace(/\D/g,'');
+    if (k) cadDepE[k] = f.departamento;
+    cadDepE['n:'+normalize(f.nome)] = f.departamento;
+  });
+  const getDepE = fn => {
+    const k = (fn.cpf||'').replace(/\D/g,'');
+    return cadDepE[k] || cadDepE['n:'+normalize(fn.nome)] || fn.departamento || 'Não definido';
+  };
+
+  // demPorEmpMes[empNome][comp] = {qtd, total}
+  // demPorDepMes[dep][comp]     = {qtd, total}
+  const demEmpMes = {}, demDepMes = {}, demMes = {};
+  folhasFilt.forEach(folha => {
+    const comp  = folha.competencia || '';
+    const eNome = folha.empresaNome || '';
+    (folha.funcionarios||[]).forEach(fn => {
+      if ((fn.situacao||'').toLowerCase() !== 'demitido') return;
+      const prov = pBRE(fn.proventos) || pBRE(fn.salario) || 0;
+      const dep  = getDepE(fn);
+
+      if (!demEmpMes[eNome]) demEmpMes[eNome] = {};
+      if (!demEmpMes[eNome][comp]) demEmpMes[eNome][comp] = {qtd:0, total:0};
+      demEmpMes[eNome][comp].qtd++;
+      demEmpMes[eNome][comp].total += prov;
+
+      if (!demDepMes[dep]) demDepMes[dep] = {};
+      if (!demDepMes[dep][comp]) demDepMes[dep][comp] = {qtd:0, total:0};
+      demDepMes[dep][comp].qtd++;
+      demDepMes[dep][comp].total += prov;
+
+      if (!demMes[comp]) demMes[comp] = {qtd:0, total:0};
+      demMes[comp].qtd++;
+      demMes[comp].total += prov;
+    });
+  });
+
+  // Estilos para as abas de demissão
+  const D = {TEAL:'2C7A72', TEAL_DK:'1A4A45', SLATE:'4A5A72', WHITE:'FFFFFF',
+             RED:'C53030', RED_LT:'FFF5F5', ORANGE:'c05621', SUB:'EEF1F5', LINE:'E2E8F0'};
+  const dBrd = () => ({top:{style:'thin',color:{rgb:D.LINE}},bottom:{style:'thin',color:{rgb:D.LINE}},left:{style:'thin',color:{rgb:D.LINE}},right:{style:'thin',color:{rgb:D.LINE}}});
+  const dSty = (bg, fg, bold, sz, align) => ({
+    font:{bold:!!bold, color:{rgb:fg||D.WHITE}, sz:sz||9, name:'Calibri'},
+    fill:{fgColor:{rgb:bg||D.TEAL}, patternType:'solid'},
+    alignment:{horizontal:align||'center', vertical:'center'},
+    border:dBrd()
+  });
+
+  // buildDemSheet: agrupa por [grupo] x [meses] com subtotais e total geral
+  const buildDemSheet = (demMap, groupLabel, titleText) => {
+    const rows = [], metas = [];
+    const R = (d,m) => { rows.push(d); metas.push(m); };
+    const mesesN2 = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    const fmtME = c => { if(!c) return ''; const [y,mo]=c.split('-'); return (mesesN2[(parseInt(mo)||1)-1]||'')+'/'+y; };
+
+    // Coletar todos os meses presentes
+    const allMes = new Set();
+    Object.values(demMap).forEach(mObj => Object.keys(mObj).forEach(m => allMes.add(m)));
+    const mesesOrdenados = [...allMes].sort();
+    const mesesLabelsE = mesesOrdenados.map(fmtME);
+    const ncols = 1 + mesesOrdenados.length * 2 + 2; // grupo + (qtd+custo)*meses + total qtd + total R$
+
+    R([titleText], 'title');
+    R([`Empresa: ${empNome}  |  Período: ${periodo}  |  Gerado em: ${hoje}`], 'sub');
+    R([], 'space');
+
+    // Cabeçalho duplo: meses com Qtd e Custo
+    const hdrRow1 = [groupLabel];
+    const hdrRow2 = [groupLabel];
+    mesesLabelsE.forEach(m => { hdrRow1.push(m, m); hdrRow2.push('Qtd.', 'Custo (R$)'); });
+    hdrRow1.push('Total', 'Total');
+    hdrRow2.push('Qtd.', 'Custo (R$)');
+    R(hdrRow1, 'hdr1');
+    R(hdrRow2, 'hdr2');
+
+    let gtQtd = 0, gtCusto = 0;
+    const gtMes = {};
+    mesesOrdenados.forEach(m => { gtMes[m] = {qtd:0, total:0}; });
+
+    Object.entries(demMap).sort().forEach(([grp, mObj], gi) => {
+      let tQtd = 0, tCusto = 0;
+      const row = [grp];
+      mesesOrdenados.forEach(m => {
+        const v = mObj[m] || {qtd:0, total:0};
+        row.push(v.qtd || null, v.total || null);
+        tQtd += v.qtd; tCusto += v.total;
+        gtMes[m].qtd += v.qtd; gtMes[m].total += v.total;
+      });
+      row.push(tQtd || null, tCusto || null);
+      R(row, gi%2===0 ? 'even' : 'odd');
+      gtQtd += tQtd; gtCusto += tCusto;
+    });
+
+    R([], 'space');
+    const totRow = ['TOTAL GERAL'];
+    mesesOrdenados.forEach(m => { totRow.push(gtMes[m].qtd||null, gtMes[m].total||null); });
+    totRow.push(gtQtd||null, gtCusto||null);
+    R(totRow, 'total');
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+
+    // Larguras das colunas
+    const cols = [{wch:26}];
+    mesesOrdenados.forEach(() => cols.push({wch:8},{wch:16}));
+    cols.push({wch:8},{wch:16});
+    ws['!cols'] = cols;
+
+    ws['!rows'] = rows.map((_,i) => {
+      const m = metas[i];
+      return m==='title'?{hpt:26}:m==='sub'?{hpt:14}:m==='hdr1'?{hpt:22}:m==='hdr2'?{hpt:18}:m==='total'?{hpt:20}:m==='space'?{hpt:4}:{hpt:16};
+    });
+
+    // Merges: título, sub, e hdr1 (pares de colunas por mês)
+    const merges = [
+      {s:{r:0,c:0},e:{r:0,c:ncols-1}},
+      {s:{r:1,c:0},e:{r:1,c:ncols-1}},
+      {s:{r:3,c:0},e:{r:4,c:0}}, // grupo header span 2 rows
+    ];
+    // Meses no hdr1: col 1,3,5... cada um span 2
+    mesesOrdenados.forEach((m,i) => {
+      merges.push({s:{r:3,c:1+i*2},e:{r:3,c:2+i*2}});
+    });
+    // Total header span 2
+    merges.push({s:{r:3,c:1+mesesOrdenados.length*2},e:{r:3,c:2+mesesOrdenados.length*2}});
+    ws['!merges'] = merges;
+
+    // Estilizar
+    rows.forEach((row, ri) => {
+      const m = metas[ri]; if (m === 'space') return;
+      row.forEach((_, ci) => {
+        const addr = XLSX.utils.encode_cell({r:ri, c:ci});
+        if (!ws[addr]) ws[addr] = {t:'s', v:''};
+        const cell = ws[addr]; const val = cell.v;
+        const isNum = typeof val === 'number';
+        const isCusto = ci > 0 && ci % 2 === 0; // cols pares = custo (após col 0)
+        const isLast = ci >= 1 + mesesOrdenados.length * 2;
+
+        if (m === 'title')  cell.s = dSty(D.TEAL_DK, D.WHITE, true, 14, 'left');
+        else if (m === 'sub') cell.s = dSty('E8F5F4', D.TEAL, false, 9, 'left');
+        else if (m === 'hdr1') {
+          const bg = ci === 0 ? D.SLATE : isLast ? D.TEAL_DK : D.TEAL;
+          cell.s = dSty(bg, D.WHITE, true, 9, ci===0?'left':'center');
+        }
+        else if (m === 'hdr2') {
+          const bg = ci === 0 ? D.SLATE : isLast ? D.TEAL_DK : isCusto ? '205E58' : '3D9E96';
+          cell.s = dSty(bg, D.WHITE, true, 8, ci===0?'left':'center');
+        }
+        else if (m === 'total') {
+          cell.s = dSty(D.TEAL_DK, D.WHITE, true, 10, ci===0?'left':'right');
+          if (isNum && val) cell.s.numFmt = isCusto ? 'R$ #,##0.00' : '#,##0';
+        }
+        else {
+          const even = m === 'even';
+          const bg = isLast ? 'D4EDE9' : even ? 'F4FAFA' : D.WHITE;
+          cell.s = {
+            font:{bold:isLast||ci===0, color:{rgb:isLast?D.TEAL_DK:'2D3748'}, sz:9, name:'Calibri'},
+            fill:{fgColor:{rgb:bg}, patternType:'solid'},
+            alignment:{horizontal:ci===0?'left':'right', vertical:'center'},
+            border:dBrd()
+          };
+          if (isNum && val) cell.s.numFmt = isCusto ? 'R$ #,##0.00' : '#,##0';
+        }
+      });
+    });
+
+    return fixCellTypes(ws);
+  };
+
+  // Aba resumo mensal de demissões
+  const buildDemMensalSheet = () => {
+    const rows = [], metas = [];
+    const R = (d,m) => { rows.push(d); metas.push(m); };
+    const mesesN3 = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    const fmtML = c => { if(!c) return ''; const [y,mo]=c.split('-'); return (mesesN3[(parseInt(mo)||1)-1]||'')+'/'+y; };
+
+    R(['EQUILIBRYM — RESUMO MENSAL DE DESLIGAMENTOS'], 'title');
+    R([`Empresa: ${empNome}  |  Período: ${periodo}  |  Gerado em: ${hoje}`], 'sub');
+    R([], 'space');
+    R(['MÊS', 'QTD. DESLIGAMENTOS', 'CUSTO TOTAL (R$)'], 'hdr');
+
+    let tqtd = 0, tcusto = 0;
+    Object.entries(demMes).sort().forEach(([comp, v], i) => {
+      R([fmtML(comp), v.qtd||null, v.total||null], i%2===0?'even':'odd');
+      tqtd += v.qtd; tcusto += v.total;
+    });
+    R([], 'space');
+    R(['TOTAL GERAL', tqtd||null, tcusto||null], 'total');
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{wch:14},{wch:20},{wch:20}];
+    ws['!rows'] = rows.map((_,i) => {
+      const m=metas[i];
+      return m==='title'?{hpt:26}:m==='sub'?{hpt:14}:m==='hdr'?{hpt:22}:m==='total'?{hpt:20}:m==='space'?{hpt:4}:{hpt:16};
+    });
+    ws['!merges'] = [{s:{r:0,c:0},e:{r:0,c:2}},{s:{r:1,c:0},e:{r:1,c:2}}];
+
+    rows.forEach((row,ri) => {
+      const m = metas[ri]; if(m==='space') return;
+      row.forEach((_,ci) => {
+        const addr = XLSX.utils.encode_cell({r:ri,c:ci});
+        if(!ws[addr]) ws[addr]={t:'s',v:''};
+        const cell=ws[addr]; const val=cell.v; const isNum=typeof val==='number';
+        const isCustoCol = ci===2;
+        if(m==='title')    cell.s=dSty(D.RED,'C53030',true,14,'left');
+        else if(m==='sub') cell.s=dSty('FFF5F5',D.RED,false,9,'left');
+        else if(m==='hdr') cell.s=dSty(D.SLATE,D.WHITE,true,9,'center');
+        else if(m==='total'){
+          cell.s=dSty(D.TEAL_DK,D.WHITE,true,10,ci===0?'left':'right');
+          if(isNum&&val) cell.s.numFmt=isCustoCol?'R$ #,##0.00':'#,##0';
+        } else {
+          const even=m==='even';
+          cell.s={font:{bold:ci===0,color:{rgb:'2D3748'},sz:9,name:'Calibri'},
+                  fill:{fgColor:{rgb:even?'FFF5F5':'FFFFFF'},patternType:'solid'},
+                  alignment:{horizontal:ci===0?'left':'right',vertical:'center'},border:dBrd()};
+          if(isNum&&val) cell.s.numFmt=isCustoCol?'R$ #,##0.00':'#,##0';
+        }
+      });
+    });
+    return fixCellTypes(ws);
+  };
+
+  // Adicionar abas de demissão
+  if (Object.keys(demMes).length) {
+    XLSX.utils.book_append_sheet(wb, buildDemMensalSheet(), '📅 Deslig. Mensal');
+    XLSX.utils.book_append_sheet(wb, buildDemSheet(demEmpMes,'EMPRESA','EQUILIBRYM — DESLIGAMENTOS POR EMPRESA'), '🏢 Deslig. por Empresa');
+    XLSX.utils.book_append_sheet(wb, buildDemSheet(demDepMes,'DEPARTAMENTO','EQUILIBRYM — DESLIGAMENTOS POR DEPARTAMENTO'), '🗂️ Deslig. por Depto');
+  }
+
+  const fname = 'Evolucao_RH_'+(porDepto?'Departamentos':'Unidades')+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
   XLSX.writeFile(wb, fname);
-  toast('✅ Excel exportado!');
+  toast('✅ Excel exportado com ' + wb.SheetNames.length + ' abas!');
 }
 
 
