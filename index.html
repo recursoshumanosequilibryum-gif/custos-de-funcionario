@@ -6,6 +6,7 @@
 <title>Equilibrym — Sistema de Folha de Pagamento</title>
 <!-- xlsx-js-style: fork do SheetJS com suporte completo a estilos de célula -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
   :root {
@@ -286,6 +287,7 @@
   <button onclick="showPage('importar-pdf')">📄 Importar PDF Folha</button>
   <button onclick="showPage('importar-rubricas')">📊 Importar Rubricas</button>
   <button onclick="showPage('indicadores')">📈 Indicadores RH</button>
+  <button onclick="showPage('evolucao')">📊 Evolução de Custos</button>
   <button onclick="showPage('exportar')">⬇️ Exportar Excel</button>
   <button onclick="showPage('config')">⚙️ Configurações</button>
 </nav>
@@ -608,6 +610,72 @@
     <div class="card">
       <div class="card-header"><h2>🏥 Detalhamento de Afastamentos e Faltas</h2></div>
       <div class="card-body" id="ind-afast-detalhe" style="overflow-x:auto"></div>
+    </div>
+  </div>
+</div>
+
+<div id="page-evolucao" class="page">
+  <div style="padding:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <h1 style="font-size:1.3rem;font-weight:800;color:var(--slate-dk)">📊 Evolução de Custos — Mês a Mês</h1>
+    </div>
+
+    <!-- Filtros -->
+    <div class="card" style="margin-bottom:18px">
+      <div class="card-body" style="padding:14px 18px">
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+          <div class="fg"><label>Ano</label>
+            <select id="evo-ano" onchange="renderEvolucao()">
+              <option>2026</option><option>2025</option><option>2024</option>
+            </select>
+          </div>
+          <div class="fg"><label>De</label>
+            <input type="month" id="evo-de" onchange="renderEvolucao()" style="width:150px">
+          </div>
+          <div class="fg"><label>Até</label>
+            <input type="month" id="evo-ate" onchange="renderEvolucao()" style="width:150px">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="renderEvolucao()">🔍 Atualizar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gráfico Custo por Unidade -->
+    <div class="card" style="margin-bottom:18px">
+      <div class="card-header">
+        <h2>💰 Evolução do Custo Financeiro por Unidade</h2>
+        <span style="font-size:.78rem;color:var(--muted)">Proventos totais mês a mês</span>
+      </div>
+      <div class="card-body">
+        <canvas id="chart-custo" height="110"></canvas>
+      </div>
+    </div>
+
+    <!-- Gráfico Headcount por Unidade -->
+    <div class="card" style="margin-bottom:18px">
+      <div class="card-header">
+        <h2>👥 Evolução do Quadro de Pessoas por Unidade</h2>
+        <span style="font-size:.78rem;color:var(--muted)">Quantidade de funcionários mês a mês</span>
+      </div>
+      <div class="card-body">
+        <canvas id="chart-pessoas" height="110"></canvas>
+      </div>
+    </div>
+
+    <!-- Tabelas resumo -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+      <div class="card">
+        <div class="card-header"><h2>💰 Custo por Unidade (R$)</h2></div>
+        <div class="card-body" style="overflow-x:auto;padding:0">
+          <div id="evo-tabela-custo"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h2>👥 Headcount por Unidade</h2></div>
+        <div class="card-body" style="overflow-x:auto;padding:0">
+          <div id="evo-tabela-pessoas"></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1071,6 +1139,7 @@ function showPage(id) {
   if (id === 'importar-pdf') { populatePdfSelects(); renderFolhasHistorico(); }
   if (id === 'importar-rubricas') { populateRubricaSelects(); renderRubricasHistorico(); }
   if (id === 'indicadores') { initIndicadores(); }
+  if (id === 'evolucao') { initEvolucao(); }
   if (id === 'config') { loadConfigForm(); }
 }
 
@@ -4993,6 +5062,281 @@ function exportarIndicadores() {
   const fname='Indicadores_RH_'+(empresa?.razao||'todas').replace(/\s+/g,'_').substring(0,20)+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
   XLSX.writeFile(wb, fname);
   toast('Indicadores exportados! '+folhas.length+' folha(s).');
+}
+
+
+// ═══════════════════════════════════════════════════════
+// EVOLUÇÃO DE CUSTOS — GRÁFICOS
+// ═══════════════════════════════════════════════════════
+
+// Cores por unidade (até 8 empresas/unidades)
+const EVO_COLORS = [
+  { line:'#2C7A72', fill:'rgba(44,122,114,0.12)' },
+  { line:'#C53030', fill:'rgba(197,48,48,0.12)'  },
+  { line:'#2B6CB0', fill:'rgba(43,108,176,0.12)' },
+  { line:'#744210', fill:'rgba(116,66,16,0.12)'  },
+  { line:'#276749', fill:'rgba(39,103,73,0.12)'  },
+  { line:'#553C9A', fill:'rgba(85,60,154,0.12)'  },
+  { line:'#B7791F', fill:'rgba(183,121,31,0.12)' },
+  { line:'#4A5568', fill:'rgba(74,85,104,0.12)'  },
+];
+
+let _chartCusto   = null;
+let _chartPessoas = null;
+
+function initEvolucao() {
+  // Ano padrão = ano atual
+  const anoEl = document.getElementById('evo-ano');
+  if (anoEl) anoEl.value = new Date().getFullYear().toString();
+
+  // Período padrão = ano todo
+  const ano = new Date().getFullYear();
+  const deEl = document.getElementById('evo-de');
+  const ateEl = document.getElementById('evo-ate');
+  if (deEl  && !deEl.value)  deEl.value  = ano + '-01';
+  if (ateEl && !ateEl.value) ateEl.value = ano + '-12';
+
+  // Popular ano baseado nas folhas disponíveis
+  const anos = [...new Set((DB.folhas||[]).map(f=>(f.competencia||'').slice(0,4)).filter(Boolean))].sort().reverse();
+  if (anos.length) {
+    const allAnos = [...new Set([...anos, '2026','2025','2024'])].sort().reverse();
+    if (anoEl) {
+      const curAno = anoEl.value;
+      anoEl.innerHTML = allAnos.map(a=>`<option value="${a}"${a===curAno?' selected':''}>${a}</option>`).join('');
+    }
+  }
+
+  renderEvolucao();
+}
+
+function renderEvolucao() {
+  const de  = document.getElementById('evo-de')?.value  || '';
+  const ate = document.getElementById('evo-ate')?.value || '';
+
+  // Filtrar folhas no período
+  const folhasFilt = (DB.folhas||[]).filter(f => {
+    const c = f.competencia || '';
+    if (de  && c < de)  return false;
+    if (ate && c > ate) return false;
+    return true;
+  }).sort((a,b) => (a.competencia||'').localeCompare(b.competencia||''));
+
+  if (!folhasFilt.length) {
+    document.getElementById('evo-tabela-custo').innerHTML =
+      '<p style="padding:20px;text-align:center;color:var(--muted)">Nenhuma folha encontrada no período. Importe PDFs mensais primeiro.</p>';
+    document.getElementById('evo-tabela-pessoas').innerHTML = '';
+    renderLineChart('chart-custo', [], [], [], 'Custo (R$)');
+    renderLineChart('chart-pessoas', [], [], [], 'Funcionários');
+    return;
+  }
+
+  // Coletar todos os meses e empresas/unidades
+  const mesesSet = new Set();
+  const empresasMap = {}; // empresaId -> nome curto
+
+  folhasFilt.forEach(f => {
+    mesesSet.add(f.competencia);
+    if (f.empresaId && !empresasMap[f.empresaId]) {
+      // Nome curto: primeira palavra significativa
+      const razao = f.empresaNome || f.empresaId;
+      const nomesCurtos = razao.replace(/LTDA|S\.A\.|EIRELI|ME|EPP/gi,'').trim();
+      const partes = nomesCurtos.split(/\s+/).filter(p => p.length > 2);
+      empresasMap[f.empresaId] = partes.slice(0,2).join(' ') || razao.substring(0,20);
+    }
+  });
+
+  const meses = [...mesesSet].sort();
+  const empresaIds = Object.keys(empresasMap);
+
+  // Formatar labels dos meses
+  const mesesNomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const mesesLabels = meses.map(m => {
+    const [y,mo] = m.split('-');
+    return (mesesNomes[(parseInt(mo)||1)-1]||'') + '/' + y;
+  });
+
+  // Consolidar dados: [empresaId][mes] = {custo, pessoas}
+  const dados = {};
+  empresaIds.forEach(eid => {
+    dados[eid] = {};
+    meses.forEach(m => { dados[eid][m] = { custo:0, pessoas:0 }; });
+  });
+
+  folhasFilt.forEach(f => {
+    const eid = f.empresaId;
+    const comp = f.competencia;
+    if (!eid || !comp || !dados[eid]) return;
+    const funcs = f.funcionarios || [];
+    dados[eid][comp].pessoas = funcs.length;
+    dados[eid][comp].custo = funcs.reduce((s, fn) => {
+      return s + (parseFloat(fn.proventos)||parseFloat(fn.salario)||0);
+    }, 0);
+  });
+
+  // Montar datasets para Chart.js
+  const datasetsCusto   = empresaIds.map((eid, i) => ({
+    label: empresasMap[eid],
+    data:  meses.map(m => dados[eid][m].custo || null),
+    borderColor:     EVO_COLORS[i % EVO_COLORS.length].line,
+    backgroundColor: EVO_COLORS[i % EVO_COLORS.length].fill,
+    borderWidth: 2.5,
+    pointRadius: 5,
+    pointHoverRadius: 7,
+    fill: true,
+    tension: 0.35,
+  }));
+
+  const datasetsPessoas = empresaIds.map((eid, i) => ({
+    label: empresasMap[eid],
+    data:  meses.map(m => dados[eid][m].pessoas || null),
+    borderColor:     EVO_COLORS[i % EVO_COLORS.length].line,
+    backgroundColor: EVO_COLORS[i % EVO_COLORS.length].fill,
+    borderWidth: 2.5,
+    pointRadius: 5,
+    pointHoverRadius: 7,
+    fill: true,
+    tension: 0.35,
+  }));
+
+  renderLineChart('chart-custo',   mesesLabels, datasetsCusto,   dados, 'custo');
+  renderLineChart('chart-pessoas', mesesLabels, datasetsPessoas, dados, 'pessoas');
+
+  // Tabelas
+  buildEvoTabela('evo-tabela-custo',   meses, mesesLabels, empresaIds, empresasMap, dados, 'custo');
+  buildEvoTabela('evo-tabela-pessoas', meses, mesesLabels, empresaIds, empresasMap, dados, 'pessoas');
+}
+
+function renderLineChart(canvasId, labels, datasets, dados, tipo) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+
+  // Destruir gráfico anterior
+  if (canvasId === 'chart-custo'   && _chartCusto)   { _chartCusto.destroy();   _chartCusto   = null; }
+  if (canvasId === 'chart-pessoas' && _chartPessoas) { _chartPessoas.destroy(); _chartPessoas = null; }
+
+  if (!labels.length || !datasets.length) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    return;
+  }
+
+  const isCusto = tipo === 'custo';
+
+  const chart = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: {
+            font: { family:'Segoe UI, system-ui, sans-serif', size:11 },
+            padding: 16,
+            usePointStyle: true,
+            pointStyleWidth: 10,
+          }
+        },
+        tooltip: {
+          backgroundColor: '#2D3748',
+          titleColor: '#E2E8F0',
+          bodyColor: '#E2E8F0',
+          padding: 10,
+          cornerRadius: 8,
+          callbacks: {
+            label: ctx => {
+              const val = ctx.parsed.y;
+              if (val === null || val === undefined) return ctx.dataset.label + ': -';
+              if (isCusto) return ctx.dataset.label + ': ' + val.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+              return ctx.dataset.label + ': ' + val + ' func.';
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color:'rgba(0,0,0,0.05)' },
+          ticks: { font:{ family:'Segoe UI', size:10 } }
+        },
+        y: {
+          beginAtZero: false,
+          grid: { color:'rgba(0,0,0,0.06)' },
+          ticks: {
+            font: { family:'Segoe UI', size:10 },
+            callback: val => isCusto
+              ? 'R$ ' + (val/1000).toFixed(0) + 'k'
+              : val + ' func.'
+          }
+        }
+      }
+    }
+  });
+
+  if (canvasId === 'chart-custo')   _chartCusto   = chart;
+  if (canvasId === 'chart-pessoas') _chartPessoas = chart;
+}
+
+function buildEvoTabela(containerId, meses, mesesLabels, empresaIds, empresasMap, dados, tipo) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+
+  const isCusto = tipo === 'custo';
+  const fmt = v => !v ? '-' : isCusto
+    ? v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})
+    : v + ' func.';
+
+  const thStyle = 'padding:8px 10px;background:var(--slate-dk);color:#fff;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.3px;text-align:center;white-space:nowrap';
+  const thL     = 'padding:8px 10px;background:var(--slate-dk);color:#fff;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.3px;text-align:left';
+  const tdStyle = (even,bold,isLast) =>
+    `padding:7px 10px;border-bottom:1px solid var(--border);font-size:.79rem;text-align:right;` +
+    `background:${isLast?'#1A4A45':even?'var(--teal-xlt)':'#fff'};` +
+    `color:${isLast?'#fff':bold?'var(--teal-dk)':'var(--slate-dk)'};` +
+    `font-weight:${isLast||bold?'700':'400'}`;
+  const tdLStyle = (even,isLast) =>
+    `padding:7px 10px;border-bottom:1px solid var(--border);font-size:.79rem;font-weight:700;` +
+    `background:${isLast?'#1A4A45':even?'var(--teal-xlt)':'#fff'};` +
+    `color:${isLast?'#fff':'var(--teal-dk)'}`;
+
+  let html = '<table style="width:100%;border-collapse:collapse">';
+  html += '<thead><tr>';
+  html += `<th style="${thL}">Unidade</th>`;
+  mesesLabels.forEach(m => { html += `<th style="${thStyle}">${m}</th>`; });
+  html += `<th style="${thStyle}">Total</th>`;
+  html += '</tr></thead><tbody>';
+
+  // Totais por mês
+  const totMes = {};
+  meses.forEach(m => { totMes[m] = 0; });
+
+  empresaIds.forEach((eid, ei) => {
+    const even = ei%2===0;
+    let total = 0;
+    html += '<tr>';
+    html += `<td style="${tdLStyle(even,false)}">${empresasMap[eid]}</td>`;
+    meses.forEach(m => {
+      const v = dados[eid][m][tipo] || 0;
+      total += v;
+      totMes[m] += v;
+      html += `<td style="${tdStyle(even,false,false)}">${fmt(v||null)}</td>`;
+    });
+    html += `<td style="${tdStyle(even,true,false)}">${fmt(total)}</td>`;
+    html += '</tr>';
+  });
+
+  // Linha de total geral
+  html += '<tr>';
+  html += `<td style="${tdLStyle(false,true)}">TOTAL GERAL</td>`;
+  let gtotal = 0;
+  meses.forEach(m => {
+    gtotal += totMes[m];
+    html += `<td style="${tdStyle(false,true,true)}">${fmt(totMes[m]||null)}</td>`;
+  });
+  html += `<td style="${tdStyle(false,true,true)}">${fmt(gtotal)}</td>`;
+  html += '</tr>';
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
 }
 
 
