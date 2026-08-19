@@ -5339,9 +5339,9 @@ function renderEvolucao() {
     const salC  = getCad(fn).sal || 0;
     const refSal = salC > 0 ? salC : salF;
 
-    // Proventos válidos: existe, é positivo, e não excede 1.6x o salário de referência
-    // (cobre HE, adicionais, 13ª parcial — mas rejeita contaminação do Resumo CC)
-    const provValido = prov > 0 && (refSal === 0 || prov <= refSal * 1.6);
+    // Custo = proventos reais da folha (já validados no momento da importação pelo parser)
+    // Fallback: salário da folha → salário do cadastro
+    const provValido = prov > 0;
 
     if (provValido)   return prov;
     if (salF > 0)     return salF;
