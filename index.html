@@ -671,7 +671,7 @@
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary btn-sm" onclick="toggleDiagnostico()">🔍 Diagnóstico</button>
         <button class="btn btn-success btn-sm" onclick="exportarEvolucaoPPT()">📊 Exportar Excel</button>
-        <button class="btn btn-primary btn-sm" onclick="exportarEvolucaoImagem()">🖼️ Exportar Imagem</button>
+        <button class="btn btn-primary btn-sm" onclick="exportarRelatorioHTML()">📄 Gerar Relatório</button>
       </div>
     </div>
     <div id="evo-diagnostico" style="display:none;margin-bottom:16px"></div>
@@ -5991,95 +5991,281 @@ function renderDiagnostico() {
 // EXPORTAR EVOLUÇÃO — EXCEL + IMAGEM
 // ═══════════════════════════════════════════════════════
 
-function exportarEvolucaoImagem() {
-  // Exportar os dois gráficos como imagem PNG lado a lado num canvas
+
+function exportarRelatorioHTML() {
+  // Capturar imagens dos gráficos existentes
   const c1 = document.getElementById('chart-custo');
   const c2 = document.getElementById('chart-pessoas');
-  if (!c1 || !c2) { toast('Gere o gráfico primeiro.', 'warn'); return; }
+  if (!c1 || !c2) { toast('Gere o gráfico primeiro clicando em Atualizar.', 'warn'); return; }
 
-  const titulo1 = document.getElementById('evo-title-custo')?.textContent || 'Evolução de Custos';
-  const titulo2 = document.getElementById('evo-title-pessoas')?.textContent || 'Evolução de Pessoas';
+  const img1 = c1.toDataURL('image/png');
+  const img2 = c2.toDataURL('image/png');
+
+  // Capturar tabelas
+  const tabelaCusto   = document.getElementById('evo-tabela-custo')?.innerHTML   || '';
+  const tabelaPessoas = document.getElementById('evo-tabela-pessoas')?.innerHTML || '';
+
+  // Meta info
   const visao   = document.getElementById('evo-visao')?.value || 'empresa';
-  const empresa = document.getElementById('evo-empresa');
-  const empNome = empresa?.options[empresa.selectedIndex]?.text || 'Todas as Empresas';
-  const de      = document.getElementById('evo-de')?.value  || '';
-  const ate     = document.getElementById('evo-ate')?.value || '';
-  const mesesN  = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-  const fmtM    = m => { if(!m) return ''; const [y,mo]=m.split('-'); return (mesesN[(parseInt(mo)||1)-1]||'')+'/'+y; };
-  const periodo = de && ate ? fmtM(de)+' a '+fmtM(ate) : de ? 'a partir de '+fmtM(de) : ate ? 'até '+fmtM(ate) : 'todo período';
+  const empEl   = document.getElementById('evo-empresa');
+  const empNome = empEl?.options[empEl.selectedIndex]?.text || 'Todas as Empresas';
+  const deptoEl = document.getElementById('evo-depto');
+  const deptoNome = deptoEl?.value ? (deptoEl.options[deptoEl.selectedIndex]?.text || '') : '';
+  const de  = document.getElementById('evo-de')?.value  || '';
+  const ate = document.getElementById('evo-ate')?.value || '';
+  const mesesN = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                  'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const fmtM = m => { if(!m) return ''; const [y,mo]=m.split('-'); return (mesesN[(parseInt(mo)||1)-1]||'')+' de '+y; };
+  const periodo = de && ate ? fmtM(de)+' a '+fmtM(ate) : de ? 'a partir de '+fmtM(de) : ate ? 'até '+fmtM(ate) : 'Período Completo';
+  const visaoLabel = visao === 'depto' ? 'Por Departamento'+(deptoNome?' — '+deptoNome:'') : 'Por Unidade/Empresa';
+  const hoje = new Date().toLocaleDateString('pt-BR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  const hojeShort = new Date().toLocaleDateString('pt-BR');
+  const titulo1 = document.getElementById('evo-title-custo')?.textContent || 'Evolução do Custo Financeiro';
+  const titulo2 = document.getElementById('evo-title-pessoas')?.textContent || 'Evolução do Quadro de Pessoas';
 
-  // Criar canvas combinado
-  const W = 1400, PAD = 40, HEADER = 100, GAP = 30;
-  const H_CHART = Math.max(c1.height, c2.height, 400);
-  const H_TOTAL = HEADER + H_CHART * 2 + GAP * 3 + PAD;
+  // Limpar estilos inline das tabelas para reestilizar no relatório
+  const limparTabela = html => html
+    .replace(/style="[^"]*background:[^"]*var\(--teal-xlt\)[^"]*"/g, 'class="row-even"')
+    .replace(/style="[^"]*background:#fff[^"]*"/g, 'class="row-odd"')
+    .replace(/style="[^"]*background:#1A4A45[^"]*"/g, 'class="row-total"');
 
-  const canvas = document.createElement('canvas');
-  canvas.width  = W;
-  canvas.height = H_TOTAL;
-  const ctx = canvas.getContext('2d');
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relatório de Evolução de Custos — Equilibrym</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --teal:#2C7A72;--teal-dk:#1A4A45;--teal-lt:#E8F5F4;
+    --slate:#4A5A72;--text:#2D3748;--muted:#718096;
+    --border:#E2E8F0;--bg:#F7FAFC;--white:#fff;
+    --accent:#3D9E96;
+  }
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5}
 
-  // Fundo branco
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, W, H_TOTAL);
+  /* CAPA */
+  .cover{
+    background:linear-gradient(135deg,#1A4A45 0%,#2C7A72 50%,#3D9E96 100%);
+    min-height:100vh;display:flex;flex-direction:column;
+    justify-content:center;padding:60px;position:relative;overflow:hidden;
+    page-break-after:always;
+  }
+  .cover::before{
+    content:'';position:absolute;top:-100px;right:-100px;width:500px;height:500px;
+    border-radius:50%;background:rgba(255,255,255,0.04);
+  }
+  .cover::after{
+    content:'';position:absolute;bottom:-80px;left:200px;width:350px;height:350px;
+    border-radius:50%;background:rgba(255,255,255,0.03);
+  }
+  .cover-logo{
+    width:72px;height:72px;background:rgba(255,255,255,0.15);border-radius:18px;
+    display:flex;align-items:center;justify-content:center;font-size:34px;
+    margin-bottom:48px;backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);
+  }
+  .cover-tag{
+    display:inline-block;background:rgba(255,255,255,0.12);color:rgba(255,255,255,0.85);
+    padding:5px 14px;border-radius:20px;font-size:11px;font-weight:600;
+    letter-spacing:1.5px;text-transform:uppercase;margin-bottom:20px;
+    border:1px solid rgba(255,255,255,0.2);
+  }
+  .cover h1{
+    font-size:3rem;font-weight:800;color:#fff;line-height:1.1;margin-bottom:16px;
+    max-width:700px;letter-spacing:-0.5px;
+  }
+  .cover h1 span{color:rgba(255,255,255,0.6);font-weight:300}
+  .cover-sub{font-size:1.1rem;color:rgba(255,255,255,0.7);margin-bottom:48px;font-weight:400}
+  .cover-meta{
+    display:flex;gap:40px;margin-top:auto;padding-top:48px;
+    border-top:1px solid rgba(255,255,255,0.15);
+  }
+  .cover-meta-item .lbl{font-size:10px;font-weight:700;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+  .cover-meta-item .val{font-size:13px;color:rgba(255,255,255,0.9);font-weight:500}
 
-  // Cabeçalho
-  ctx.fillStyle = '#2C7A72';
-  ctx.fillRect(0, 0, W, HEADER);
+  /* LAYOUT */
+  .page{padding:52px 60px;max-width:1100px;margin:0 auto}
+  .section{margin-bottom:52px;page-break-inside:avoid}
 
-  ctx.fillStyle = '#FFFFFF';
-  ctx.font = 'bold 22px Segoe UI, Arial, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText('Equilibrym — Evolução de Custos e Quadro de Pessoas', PAD, 38);
+  /* HEADER DE SEÇÃO */
+  .sec-header{
+    display:flex;align-items:center;gap:12px;margin-bottom:24px;
+    padding-bottom:14px;border-bottom:2px solid var(--teal-lt);
+  }
+  .sec-icon{
+    width:38px;height:38px;background:linear-gradient(135deg,var(--teal),var(--accent));
+    border-radius:10px;display:flex;align-items:center;justify-content:center;
+    font-size:17px;flex-shrink:0;
+  }
+  .sec-title{font-size:1.2rem;font-weight:700;color:var(--teal-dk)}
+  .sec-sub{font-size:.82rem;color:var(--muted);margin-top:1px}
 
-  ctx.font = '14px Segoe UI, Arial, sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillText(`${empNome}  ·  ${periodo}  ·  ${visao === 'depto' ? 'Por Departamento' : 'Por Unidade'}  ·  Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, PAD, 68);
+  /* SUMMARY CARDS */
+  .cards-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:36px}
+  .card{
+    background:var(--white);border-radius:14px;padding:22px 24px;
+    border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,0.05);
+    border-left:4px solid var(--teal);
+  }
+  .card.accent{border-left-color:var(--accent)}
+  .card.dark{border-left-color:var(--teal-dk)}
+  .card-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:8px}
+  .card-val{font-size:1.8rem;font-weight:800;color:var(--teal-dk);line-height:1}
+  .card-note{font-size:.75rem;color:var(--muted);margin-top:6px}
 
-  // Linha separadora
-  ctx.fillStyle = '#F0F0F0';
-  ctx.fillRect(0, HEADER, W, 2);
+  /* GRÁFICOS */
+  .chart-wrap{
+    background:var(--white);border-radius:16px;padding:28px 32px;
+    border:1px solid var(--border);box-shadow:0 2px 12px rgba(0,0,0,0.06);
+    margin-bottom:28px;
+  }
+  .chart-wrap h3{font-size:1rem;font-weight:700;color:var(--teal-dk);margin-bottom:6px}
+  .chart-wrap p{font-size:.78rem;color:var(--muted);margin-bottom:20px}
+  .chart-wrap img{width:100%;border-radius:8px}
 
-  // Título gráfico 1
-  ctx.fillStyle = '#2D3748';
-  ctx.font = 'bold 15px Segoe UI, Arial, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText(titulo1, PAD, HEADER + GAP + 18);
+  /* TABELAS */
+  .table-wrap{
+    background:var(--white);border-radius:16px;overflow:hidden;
+    border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,0.05);
+    margin-bottom:28px;
+  }
+  .table-wrap h3{
+    padding:16px 22px;font-size:.92rem;font-weight:700;color:var(--teal-dk);
+    border-bottom:1px solid var(--border);background:var(--teal-lt);
+  }
+  .table-wrap table{width:100%;border-collapse:collapse;font-size:.78rem}
+  .table-wrap thead tr{background:var(--teal-dk)}
+  .table-wrap th{padding:10px 14px;color:#fff;font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.4px;text-align:right}
+  .table-wrap th:first-child{text-align:left}
+  .table-wrap td{padding:9px 14px;text-align:right;color:var(--text);border-bottom:1px solid var(--border)}
+  .table-wrap td:first-child{text-align:left;font-weight:600;color:var(--teal-dk)}
+  .table-wrap tbody tr:nth-child(even){background:#F4FAFA}
+  .table-wrap tbody tr:last-child{background:var(--teal-dk)!important}
+  .table-wrap tbody tr:last-child td{color:#fff!important;font-weight:700!important;border:none}
 
-  // Gráfico 1
-  const y1 = HEADER + GAP + 28;
-  ctx.drawImage(c1, PAD, y1, W - PAD*2, H_CHART);
+  /* RODAPÉ */
+  .footer{
+    background:var(--teal-dk);color:rgba(255,255,255,0.6);
+    padding:24px 60px;display:flex;justify-content:space-between;
+    align-items:center;font-size:.75rem;margin-top:52px;
+    page-break-inside:avoid;
+  }
+  .footer strong{color:rgba(255,255,255,0.9)}
 
-  // Linha divisória
-  ctx.strokeStyle = '#E2E8F0';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(PAD, y1 + H_CHART + GAP/2);
-  ctx.lineTo(W - PAD, y1 + H_CHART + GAP/2);
-  ctx.stroke();
+  /* DIVIDER */
+  .divider{height:1px;background:var(--border);margin:36px 0}
 
-  // Título gráfico 2
-  ctx.fillStyle = '#2D3748';
-  ctx.font = 'bold 15px Segoe UI, Arial, sans-serif';
-  ctx.fillText(titulo2, PAD, y1 + H_CHART + GAP + 18);
+  /* NOTA */
+  .nota{
+    background:var(--teal-lt);border-left:3px solid var(--teal);
+    padding:12px 16px;border-radius:0 8px 8px 0;font-size:.78rem;
+    color:var(--teal-dk);margin-bottom:24px;
+  }
 
-  // Gráfico 2
-  const y2 = y1 + H_CHART + GAP + 28;
-  ctx.drawImage(c2, PAD, y2, W - PAD*2, H_CHART);
+  @media print{
+    body{background:#fff}
+    .cover{page-break-after:always}
+    .section{page-break-inside:avoid}
+    @page{margin:0;size:A4 landscape}
+  }
+</style>
+</head>
+<body>
 
-  // Rodapé
-  ctx.fillStyle = '#718096';
-  ctx.font = '11px Segoe UI, Arial, sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText('Equilibrym RH — Sistema de Gestão de Folha de Pagamento', W - PAD, H_TOTAL - 14);
+<!-- CAPA -->
+<div class="cover">
+  <div class="cover-logo">🏥</div>
+  <div class="cover-tag">Relatório Gerencial de RH</div>
+  <h1>Evolução de Custos<br><span>&amp; Quadro de Pessoas</span></h1>
+  <div class="cover-sub">${empNome}</div>
+  <div class="cover-meta">
+    <div class="cover-meta-item"><div class="lbl">Período</div><div class="val">${periodo}</div></div>
+    <div class="cover-meta-item"><div class="lbl">Visão</div><div class="val">${visaoLabel}</div></div>
+    <div class="cover-meta-item"><div class="lbl">Emitido em</div><div class="val">${hojeShort}</div></div>
+    <div class="cover-meta-item"><div class="lbl">Sistema</div><div class="val">Equilibrym RH</div></div>
+  </div>
+</div>
 
-  // Download
-  const link = document.createElement('a');
-  const hoje = new Date().toISOString().slice(0,10);
-  link.download = `Evolucao_Custos_${hoje}.png`;
-  link.href = canvas.toDataURL('image/png');
-  link.click();
+<!-- CONTEÚDO -->
+<div class="page">
 
-  toast('✅ Imagem exportada!');
+  <!-- NOTA -->
+  <div class="nota">
+    📋 Este relatório foi gerado automaticamente a partir dos dados de folha de pagamento importados no sistema.
+    As informações refletem os proventos brutos mensais por ${visaoLabel.toLowerCase()}.
+  </div>
+
+  <!-- SEÇÃO 1: CUSTO FINANCEIRO -->
+  <div class="section">
+    <div class="sec-header">
+      <div class="sec-icon">💰</div>
+      <div>
+        <div class="sec-title">${titulo1}</div>
+        <div class="sec-sub">Proventos brutos mensais — valores em R$</div>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <h3>${titulo1}</h3>
+      <p>Evolução mês a mês dos proventos brutos totais por ${visao === 'depto' ? 'departamento' : 'unidade'}</p>
+      <img src="${img1}" alt="Gráfico de Evolução de Custos">
+    </div>
+
+    <div class="table-wrap">
+      <h3>📋 Dados — Custo por ${visao === 'depto' ? 'Departamento' : 'Unidade'} (R$)</h3>
+      ${tabelaCusto}
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- SEÇÃO 2: QUADRO DE PESSOAS -->
+  <div class="section">
+    <div class="sec-header">
+      <div class="sec-icon">👥</div>
+      <div>
+        <div class="sec-title">${titulo2}</div>
+        <div class="sec-sub">Quantidade de funcionários ativos mês a mês</div>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <h3>${titulo2}</h3>
+      <p>Evolução do quadro de pessoas por ${visao === 'depto' ? 'departamento' : 'unidade'}</p>
+      <img src="${img2}" alt="Gráfico de Evolução de Pessoas">
+    </div>
+
+    <div class="table-wrap">
+      <h3>📋 Dados — Headcount por ${visao === 'depto' ? 'Departamento' : 'Unidade'}</h3>
+      ${tabelaPessoas}
+    </div>
+  </div>
+
+</div>
+
+<!-- RODAPÉ -->
+<div class="footer">
+  <div><strong>Equilibrym Especialidades Médicas &amp; Terapêuticas</strong> — Relatório Gerencial de RH</div>
+  <div>Gerado em ${hoje} &nbsp;·&nbsp; Equilibrym RH Sistema</div>
+</div>
+
+</body>
+</html>`;
+
+  // Abrir em nova aba
+  const blob = new Blob([html], {type:'text/html;charset=utf-8'});
+  const url  = URL.createObjectURL(blob);
+  const win  = window.open(url, '_blank');
+  if (!win) {
+    // Fallback: download direto
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Relatorio_Evolucao_Custos_'+new Date().toISOString().slice(0,10)+'.html';
+    a.click();
+  }
+  toast('✅ Relatório gerado! Use Ctrl+P para imprimir ou salvar como PDF.');
 }
 
 function exportarEvolucaoPPT() {
