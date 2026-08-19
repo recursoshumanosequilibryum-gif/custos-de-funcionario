@@ -668,7 +668,9 @@
   <div style="padding:20px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
       <h1 style="font-size:1.3rem;font-weight:800;color:var(--slate-dk)">📊 Evolução de Custos — Mês a Mês</h1>
+      <button class="btn btn-secondary btn-sm" onclick="toggleDiagnostico()">🔍 Diagnóstico</button>
     </div>
+    <div id="evo-diagnostico" style="display:none;margin-bottom:16px"></div>
 
     <!-- Filtros -->
     <div class="card" style="margin-bottom:18px">
@@ -5303,7 +5305,7 @@ function renderEvolucao() {
   }
 
   // ── VISÃO POR DEPARTAMENTO ─────────────────────────────
-  // Função parser BR usada em todo o bloco
+  // Função parser BR
   const parseBRVal = v => {
     if (!v && v !== 0) return 0;
     const s = String(v).trim();
@@ -5312,8 +5314,8 @@ function renderEvolucao() {
     return parseFloat(s) || 0;
   };
 
-  // Mapa único: CPF -> {depto, salario} e nome -> {depto, salario} do cadastro
-  const cadMap = {}; // chave (cpf sem mask ou 'n:'+nomeNorm) -> {depto, sal}
+  // Mapa único do cadastro: chave -> {dep, sal}
+  const cadMap = {};
   DB.funcionarios.forEach(f => {
     const sal   = parseBRVal(f.salario);
     const dep   = f.departamento || '';
@@ -5324,10 +5326,30 @@ function renderEvolucao() {
   });
 
   const getChave = fn => (fn.cpf||'').replace(/\D/g,'') || ('n:' + normalize(fn.nome));
-  const getDep   = fn => { const c = cadMap[getChave(fn)]; return c?.dep || fn.departamento || ''; };
-  const getSal   = fn => { const c = cadMap[getChave(fn)]; return c?.sal || parseBRVal(fn.salario); };
+  const getCad   = fn => cadMap[getChave(fn)] || {};
 
-  // Coletar todos os deptos presentes nas folhas
+  const getDep = fn => getCad(fn).dep || fn.departamento || '';
+
+  // Calcular custo de um funcionário de forma confiável
+  // Regra: usar proventos da folha APENAS se for razoável (≤ 3x o salário cadastral)
+  // Isso evita que valores contaminados do Resumo CC sejam usados
+  const getCusto = fn => {
+    const prov  = parseBRVal(fn.proventos);
+    const salF  = parseBRVal(fn.salario);
+    const salC  = getCad(fn).sal || 0;
+    const refSal = salC > 0 ? salC : salF;
+
+    // Proventos válidos: existe, é positivo, e não excede 1.6x o salário de referência
+    // (cobre HE, adicionais, 13ª parcial — mas rejeita contaminação do Resumo CC)
+    const provValido = prov > 0 && (refSal === 0 || prov <= refSal * 1.6);
+
+    if (provValido)   return prov;
+    if (salF > 0)     return salF;
+    if (salC > 0)     return salC;
+    return 0;
+  };
+
+  // Coletar todos os deptos
   const deptosSet = new Set();
   folhasFilt.forEach(f => {
     (f.funcionarios||[]).forEach(fn => {
@@ -5345,35 +5367,29 @@ function renderEvolucao() {
   const deptosMap = {};
   deptos.forEach(d => { deptosMap[d] = d.length > 22 ? d.substring(0,22)+'...' : d; });
 
-  // Estrutura: dados2[dep][mes] = {custo, pessoas}
-  // Usar Map para deduplicar por chave (CPF ou nome) dentro de cada dep+mes
-  // Estrutura interna: acum[dep+'|'+mes] = Map<chave, {prov, sal}>
-  const acum = {}; // dep|mes -> Map<chave, custo>
+  // acum[dep|mes] = Map<chave, custo> — deduplicado por funcionário
+  const acum = {};
 
   folhasFilt.forEach(f => {
     const comp = f.competencia || '';
     (f.funcionarios||[]).forEach(fn => {
       const dep   = getDep(fn);
       if (!dep) return;
-      if (!deptosMap[dep]) return;           // não está nos deptos coletados
-      if (depto && dep !== depto) return;    // filtro específico
+      if (!deptosMap[dep]) return;
+      if (depto && dep !== depto) return;
 
       const chave = getChave(fn);
       const key   = dep + '|' + comp;
       if (!acum[key]) acum[key] = new Map();
 
-      // Só registrar se ainda não viu este funcionário neste dep+mes
-      // (evita duplicação quando mesmo func aparece em duas folhas do mês)
+      // Primeiro registro ganha (deduplicação)
       if (!acum[key].has(chave)) {
-        const prov   = parseBRVal(fn.proventos);
-        const sal    = getSal(fn);
-        const custo  = prov > 0 ? prov : sal;
-        acum[key].set(chave, custo);
+        acum[key].set(chave, getCusto(fn));
       }
     });
   });
 
-  // Converter acum para dados2
+  // Converter para dados2
   const dados2 = {};
   deptos.forEach(d => {
     dados2[d] = {};
@@ -5381,7 +5397,9 @@ function renderEvolucao() {
   });
 
   Object.entries(acum).forEach(([key, funcsMap]) => {
-    const [dep, comp] = key.split('|');
+    const sep  = key.lastIndexOf('|');
+    const dep  = key.slice(0, sep);
+    const comp = key.slice(sep + 1);
     if (!dados2[dep] || !dados2[dep][comp]) return;
     dados2[dep][comp].pessoas = funcsMap.size;
     dados2[dep][comp].custo   = [...funcsMap.values()].reduce((s,v)=>s+v, 0);
@@ -5860,14 +5878,17 @@ function renderDiagnostico() {
     return parseFloat(s) || 0;
   };
 
-  // Mapa depto do cadastro
-  const mapD = {};
+  // Mapa depto + salario do cadastro
+  const mapCad = {};
   DB.funcionarios.forEach(f => {
-    if (!f.departamento) return;
-    const k = (f.cpf||'').replace(/\D/g,'');
-    if (k) mapD[k] = f.departamento;
-    mapD['n:'+normalize(f.nome)] = f.departamento;
+    const k  = (f.cpf||'').replace(/\D/g,'');
+    const kn = 'n:' + normalize(f.nome);
+    const v  = { dep: f.departamento||'', sal: parseBRD(f.salario) };
+    if (k) mapCad[k] = v;
+    mapCad[kn] = v;
   });
+
+  const getKey = fn => (fn.cpf||'').replace(/\D/g,'') || ('n:'+normalize(fn.nome));
 
   const folhas = (DB.folhas||[]).filter(f => {
     if (empId && f.empresaId !== empId) return false;
@@ -5877,62 +5898,82 @@ function renderDiagnostico() {
   }).sort((a,b)=>(a.competencia||'').localeCompare(b.competencia||''));
 
   const mesesN = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-  const mesLabel = c => {
-    const [y,m] = (c||'').split('-');
-    return (mesesN[(parseInt(m)||1)-1]||'') + '/' + y;
-  };
+  const mesLabel = c => { const [y,m]=(c||'').split('-'); return (mesesN[(parseInt(m)||1)-1]||'')+'/'+y; };
+  const fmtR = v => v>0 ? v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}) : '-';
 
-  let html = `<div class="card"><div class="card-header"><h2>🔍 Diagnóstico — Dados Brutos por Mês</h2>
-    <button class="btn btn-secondary btn-xs" onclick="document.getElementById('evo-diagnostico').style.display='none'">✕ Fechar</button>
-  </div><div class="card-body" style="padding:0;overflow-x:auto">`;
+  let html = `<div class="card">
+    <div class="card-header">
+      <h2>🔍 Diagnóstico — Dados brutos por mês/funcionário</h2>
+      <button class="btn btn-secondary btn-xs" onclick="document.getElementById('evo-diagnostico').style.display='none'">✕ Fechar</button>
+    </div>
+    <div class="card-body" style="padding:0;overflow-x:auto;max-height:600px;overflow-y:auto">`;
 
+  // Por competência, agrupar por depto, deduplicar por chave
   folhas.forEach(folha => {
     const comp = folha.competencia;
-    // Agrupar por departamento
-    const byDep = {};
+    // deduplicar
+    const vistosComp = new Map(); // chave -> {dados}
     (folha.funcionarios||[]).forEach(fn => {
-      const cpfK = (fn.cpf||'').replace(/\D/g,'');
-      const dep = mapD[cpfK] || mapD['n:'+normalize(fn.nome)] || fn.departamento || 'SEM DEPTO';
-      if (!byDep[dep]) byDep[dep] = [];
-      const prov = parseBRD(fn.proventos);
-      const sal  = parseBRD(fn.salario);
-      byDep[dep].push({ nome:fn.nome, prov, sal, custo: prov>0?prov:sal,
-        depFolha: fn.departamento||'-', depCad: mapD[cpfK]||mapD['n:'+normalize(fn.nome)]||'-' });
+      const chave = getKey(fn);
+      const cad   = mapCad[chave] || {};
+      const dep   = cad.dep || fn.departamento || 'SEM DEPTO';
+      const prov  = parseBRD(fn.proventos);
+      const salF  = parseBRD(fn.salario);
+      const salC  = cad.sal || 0;
+      const custo = prov > 0 ? prov : (salF > 0 ? salF : salC);
+      const isDup = vistosComp.has(chave);
+
+      if (!isDup) {
+        vistosComp.set(chave, { nome:fn.nome, dep, prov, salF, salC, custo,
+          depFolha: fn.departamento||'-', depCad: cad.dep||'-', dup: false });
+      }
+      // marcar duplicatas mas não adicionar
     });
 
-    const totalComp = Object.values(byDep).flat().reduce((s,f)=>s+f.custo,0);
+    // Agrupar por depto
+    const byDep = {};
+    vistosComp.forEach(f => {
+      if (!byDep[f.dep]) byDep[f.dep] = [];
+      byDep[f.dep].push(f);
+    });
 
-    html += `<div style="padding:10px 16px;background:var(--teal-lt);border-bottom:2px solid var(--teal-dk);font-weight:700;font-size:.85rem;color:var(--teal-dk)">
-      📅 ${mesLabel(comp)} — ${folha.empresaNome||''} — Total: ${totalComp.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
+    const totalComp = [...vistosComp.values()].reduce((s,f)=>s+f.custo,0);
+
+    html += `<div style="padding:8px 14px;background:var(--teal-dk);color:#fff;font-weight:700;font-size:.85rem">
+      📅 ${mesLabel(comp)} &nbsp;·&nbsp; ${folha.empresaNome||''} &nbsp;·&nbsp;
+      ${vistosComp.size} func. &nbsp;·&nbsp; Total: ${fmtR(totalComp)}
     </div>`;
 
     Object.entries(byDep).sort().forEach(([dep, funcs]) => {
       const totDep = funcs.reduce((s,f)=>s+f.custo,0);
-      html += `<div style="padding:6px 16px;background:var(--slate-lt);font-size:.78rem;font-weight:700;color:var(--slate-dk);border-bottom:1px solid var(--border)">
-        📂 ${dep} — ${funcs.length} func. — ${totDep.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
+      html += `<div style="padding:5px 14px;background:var(--slate-lt);font-size:.77rem;font-weight:700;color:var(--slate);border-bottom:1px solid var(--border)">
+        &nbsp;&nbsp;📂 ${dep} — ${funcs.length} func. — ${fmtR(totDep)}
       </div>
-      <table style="width:100%;border-collapse:collapse;font-size:.76rem">
-        <thead><tr style="background:#f0f0f0">
-          <th style="padding:4px 10px;text-align:left;color:var(--slate-dk)">Nome</th>
-          <th style="padding:4px 10px;text-align:left;color:var(--slate-dk)">Depto Folha</th>
-          <th style="padding:4px 10px;text-align:left;color:var(--slate-dk)">Depto Cadastro</th>
-          <th style="padding:4px 10px;text-align:right;color:var(--slate-dk)">Proventos</th>
-          <th style="padding:4px 10px;text-align:right;color:var(--slate-dk)">Salário</th>
-          <th style="padding:4px 10px;text-align:right;font-weight:700;color:var(--teal-dk)">Custo Usado</th>
+      <table style="width:100%;border-collapse:collapse;font-size:.75rem">
+        <thead><tr style="background:#eef1f5">
+          <th style="padding:4px 10px;text-align:left">Funcionário</th>
+          <th style="padding:4px 10px;text-align:left">Depto Folha</th>
+          <th style="padding:4px 10px;text-align:left">Depto Cad.</th>
+          <th style="padding:4px 10px;text-align:right">Prov. Folha</th>
+          <th style="padding:4px 10px;text-align:right">Sal. Folha</th>
+          <th style="padding:4px 10px;text-align:right">Sal. Cad.</th>
+          <th style="padding:4px 10px;text-align:right;color:var(--teal-dk)">✔ CUSTO</th>
         </tr></thead><tbody>`;
 
       funcs.forEach((f,i) => {
-        const mismatch = f.depFolha !== f.depCad && f.depCad !== '-';
-        html += `<tr style="background:${mismatch?'#FFF5F5':i%2===0?'var(--teal-xlt)':'#fff'};border-bottom:1px solid var(--border)">
-          <td style="padding:4px 10px;font-weight:600;color:var(--teal-dk)">${f.nome}</td>
-          <td style="padding:4px 10px;color:${mismatch?'var(--danger)':'var(--muted)'}">${f.depFolha}</td>
-          <td style="padding:4px 10px;color:var(--success)">${f.depCad}</td>
-          <td style="padding:4px 10px;text-align:right">${f.prov>0?f.prov.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'-'}</td>
-          <td style="padding:4px 10px;text-align:right;color:var(--muted)">${f.sal>0?f.sal.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'-'}</td>
-          <td style="padding:4px 10px;text-align:right;font-weight:700;color:var(--total)">${f.custo.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+        const erroProv = f.prov > 0 && Math.abs(f.prov - f.salC) > f.salC * 0.5 && f.prov > 10000;
+        const semDep   = f.depFolha !== f.depCad;
+        const bg = erroProv ? '#FFF0F0' : semDep ? '#FFFBEB' : i%2===0 ? 'var(--teal-xlt)' : '#fff';
+        html += `<tr style="background:${bg};border-bottom:1px solid var(--border)">
+          <td style="padding:4px 10px;font-weight:600;color:var(--teal-dk)">${f.nome}${erroProv?' ⚠️':''}</td>
+          <td style="padding:4px 10px;color:${semDep?'var(--warn)':'var(--muted)'};font-size:.72rem">${f.depFolha}</td>
+          <td style="padding:4px 10px;color:var(--success);font-size:.72rem">${f.depCad}</td>
+          <td style="padding:4px 10px;text-align:right;color:${erroProv?'var(--danger)':'inherit'}">${fmtR(f.prov)}</td>
+          <td style="padding:4px 10px;text-align:right;color:var(--muted)">${fmtR(f.salF)}</td>
+          <td style="padding:4px 10px;text-align:right;color:var(--muted)">${fmtR(f.salC)}</td>
+          <td style="padding:4px 10px;text-align:right;font-weight:700;color:var(--total)">${fmtR(f.custo)}</td>
         </tr>`;
       });
-
       html += '</tbody></table>';
     });
   });
