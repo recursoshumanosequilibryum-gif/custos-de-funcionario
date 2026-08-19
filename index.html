@@ -6083,64 +6083,115 @@ function exportarRelatorioHTML() {
 
   // ── Gerar HTML da tabela de demissões por empresa ─────────────
   const buildTabelaDemEmp = () => {
-    if(!Object.keys(demPorEmp).length) return '<p style="color:#718096;font-size:.82rem;padding:16px">Nenhuma demissão no período selecionado.</p>';
-    let html='<table><thead><tr><th>Empresa</th><th>Mês</th><th>Funcionário</th><th>Cargo</th><th>Departamento</th><th>Custo</th></tr></thead><tbody>';
-    let gtotal=0;
-    Object.entries(demPorEmp).sort().forEach(([emp,dems])=>{
-      const tot=dems.reduce((s,d)=>s+d.prov,0);
-      gtotal+=tot;
-      dems.sort((a,b)=>a.comp.localeCompare(b.comp)).forEach((d,i)=>{
-        html+=`<tr class="${i%2===0?'even':'odd'}">
-          ${i===0?`<td rowspan="${dems.length}" style="font-weight:700;color:#2C7A72;vertical-align:top;background:#F4FAFA">${emp}</td>`:''}
-          <td>${fmtMC(d.comp)}</td>
-          <td style="font-weight:600">${d.nome}</td>
-          <td style="color:#718096;font-size:.75rem">${d.cargo}</td>
-          <td>${d.dep}</td>
-          <td style="font-weight:700;color:#1A4A45">${fBRL(d.prov)}</td>
+    if (!Object.keys(demPorEmp).length) return '<p style="color:#718096;font-size:.82rem;padding:16px">Nenhuma demissão no período selecionado.</p>';
+
+    // Agrupar por empresa + mês → {qtd, total}
+    const empMes = {}; // empNome -> { mes -> {qtd, total} }
+    Object.entries(demPorEmp).forEach(([emp, dems]) => {
+      if (!empMes[emp]) empMes[emp] = {};
+      dems.forEach(d => {
+        if (!empMes[emp][d.comp]) empMes[emp][d.comp] = {qtd:0, total:0};
+        empMes[emp][d.comp].qtd++;
+        empMes[emp][d.comp].total += d.prov;
+      });
+    });
+
+    let html = '<table><thead><tr><th>Empresa</th><th>Mês</th><th style="text-align:center">Qtd. Deslig.</th><th>Custo Total (R$)</th></tr></thead><tbody>';
+    let gtotal = 0, gqtd = 0;
+
+    Object.entries(empMes).sort().forEach(([emp, meses]) => {
+      const totEmp = Object.values(meses).reduce((s,v)=>s+v.total,0);
+      const qtdEmp = Object.values(meses).reduce((s,v)=>s+v.qtd,0);
+      gtotal += totEmp; gqtd += qtdEmp;
+      const rows = Object.entries(meses).sort();
+
+      rows.forEach(([comp, v], i) => {
+        html += `<tr class="${i%2===0?'even':'odd'}">
+          ${i===0 ? `<td rowspan="${rows.length}" style="font-weight:700;color:#2C7A72;vertical-align:middle;background:#F4FAFA">${emp}</td>` : ''}
+          <td>${fmtMC(comp)}</td>
+          <td style="text-align:center;font-weight:600">${v.qtd}</td>
+          <td style="font-weight:700;color:#1A4A45">${fBRL(v.total)}</td>
         </tr>`;
       });
-      html+=`<tr class="subtotal-row"><td></td><td colspan="4" style="font-weight:700;text-align:right">Subtotal ${emp}</td><td style="font-weight:800">${fBRL(tot)}</td></tr>`;
+      html += `<tr class="subtotal-row">
+        <td></td><td style="font-weight:700">Subtotal — ${emp}</td>
+        <td style="text-align:center;font-weight:700">${qtdEmp}</td>
+        <td style="font-weight:800">${fBRL(totEmp)}</td>
+      </tr>`;
     });
-    html+=`<tr class="total-row"><td colspan="5" style="font-weight:800">TOTAL GERAL</td><td style="font-weight:800">${fBRL(gtotal)}</td></tr>`;
-    html+='</tbody></table>';
+
+    html += `<tr class="total-row">
+      <td colspan="2" style="font-weight:800">TOTAL GERAL</td>
+      <td style="text-align:center;font-weight:800">${gqtd}</td>
+      <td style="font-weight:800">${fBRL(gtotal)}</td>
+    </tr>`;
+    html += '</tbody></table>';
     return html;
   };
 
-  // ── Gerar HTML da tabela de demissões por departamento ────────
+  // ── Tabela por departamento ────────────────────────────────────
   const buildTabelaDemDep = () => {
-    if(!Object.keys(demPorDep).length) return '<p style="color:#718096;font-size:.82rem;padding:16px">Nenhuma demissão no período selecionado.</p>';
-    let html='<table><thead><tr><th>Departamento</th><th>Mês</th><th>Funcionário</th><th>Empresa</th><th>Custo</th></tr></thead><tbody>';
-    let gtotal=0;
-    Object.entries(demPorDep).sort().forEach(([dep,dems])=>{
-      const tot=dems.reduce((s,d)=>s+d.prov,0);
-      gtotal+=tot;
-      dems.sort((a,b)=>a.comp.localeCompare(b.comp)).forEach((d,i)=>{
-        html+=`<tr class="${i%2===0?'even':'odd'}">
-          ${i===0?`<td rowspan="${dems.length}" style="font-weight:700;color:#2C7A72;vertical-align:top;background:#F4FAFA">${dep}</td>`:''}
-          <td>${fmtMC(d.comp)}</td>
-          <td style="font-weight:600">${d.nome}</td>
-          <td style="color:#718096;font-size:.75rem">${d.empresa}</td>
-          <td style="font-weight:700;color:#1A4A45">${fBRL(d.prov)}</td>
+    if (!Object.keys(demPorDep).length) return '<p style="color:#718096;font-size:.82rem;padding:16px">Nenhuma demissão no período selecionado.</p>';
+
+    // Agrupar por departamento + mês
+    const depMes = {};
+    Object.entries(demPorDep).forEach(([dep, dems]) => {
+      if (!depMes[dep]) depMes[dep] = {};
+      dems.forEach(d => {
+        if (!depMes[dep][d.comp]) depMes[dep][d.comp] = {qtd:0, total:0};
+        depMes[dep][d.comp].qtd++;
+        depMes[dep][d.comp].total += d.prov;
+      });
+    });
+
+    let html = '<table><thead><tr><th>Departamento</th><th>Mês</th><th style="text-align:center">Qtd. Deslig.</th><th>Custo Total (R$)</th></tr></thead><tbody>';
+    let gtotal = 0, gqtd = 0;
+
+    Object.entries(depMes).sort().forEach(([dep, meses]) => {
+      const totDep = Object.values(meses).reduce((s,v)=>s+v.total,0);
+      const qtdDep = Object.values(meses).reduce((s,v)=>s+v.qtd,0);
+      gtotal += totDep; gqtd += qtdDep;
+      const rows = Object.entries(meses).sort();
+
+      rows.forEach(([comp, v], i) => {
+        html += `<tr class="${i%2===0?'even':'odd'}">
+          ${i===0 ? `<td rowspan="${rows.length}" style="font-weight:700;color:#2C7A72;vertical-align:middle;background:#F4FAFA">${dep}</td>` : ''}
+          <td>${fmtMC(comp)}</td>
+          <td style="text-align:center;font-weight:600">${v.qtd}</td>
+          <td style="font-weight:700;color:#1A4A45">${fBRL(v.total)}</td>
         </tr>`;
       });
-      html+=`<tr class="subtotal-row"><td></td><td colspan="3" style="font-weight:700;text-align:right">Subtotal ${dep}</td><td style="font-weight:800">${fBRL(tot)}</td></tr>`;
+      html += `<tr class="subtotal-row">
+        <td></td><td style="font-weight:700">Subtotal — ${dep}</td>
+        <td style="text-align:center;font-weight:700">${qtdDep}</td>
+        <td style="font-weight:800">${fBRL(totDep)}</td>
+      </tr>`;
     });
-    html+=`<tr class="total-row"><td colspan="4" style="font-weight:800">TOTAL GERAL</td><td style="font-weight:800">${fBRL(gtotal)}</td></tr>`;
-    html+='</tbody></table>';
+
+    html += `<tr class="total-row">
+      <td colspan="2" style="font-weight:800">TOTAL GERAL</td>
+      <td style="text-align:center;font-weight:800">${gqtd}</td>
+      <td style="font-weight:800">${fBRL(gtotal)}</td>
+    </tr>`;
+    html += '</tbody></table>';
     return html;
   };
 
   // ── Resumo mensal de demissões ────────────────────────────────
   const buildResumoMensal = () => {
-    if(!Object.keys(demPorMes).length) return '';
-    let html='<table><thead><tr><th>Mês</th><th>Demissões</th><th>Custo Total</th></tr></thead><tbody>';
-    let tqtd=0,tcusto=0;
-    Object.entries(demPorMes).sort().forEach(([comp,v],i)=>{
-      html+=`<tr class="${i%2===0?'even':'odd'}"><td>${fmtMC(comp)}</td><td style="text-align:center">${v.qtd}</td><td style="font-weight:700;color:#1A4A45">${fBRL(v.total)}</td></tr>`;
-      tqtd+=v.qtd; tcusto+=v.total;
+    if (!Object.keys(demPorMes).length) return '';
+    let html = '<table><thead><tr><th>Mês</th><th style="text-align:center">Qtd. Deslig.</th><th>Custo Total (R$)</th></tr></thead><tbody>';
+    let tqtd = 0, tcusto = 0;
+    Object.entries(demPorMes).sort().forEach(([comp, v], i) => {
+      html += `<tr class="${i%2===0?'even':'odd'}">
+        <td>${fmtMC(comp)}</td>
+        <td style="text-align:center;font-weight:600">${v.qtd}</td>
+        <td style="font-weight:700;color:#1A4A45">${fBRL(v.total)}</td>
+      </tr>`;
+      tqtd += v.qtd; tcusto += v.total;
     });
-    html+=`<tr class="total-row"><td>TOTAL</td><td style="text-align:center">${tqtd}</td><td>${fBRL(tcusto)}</td></tr>`;
-    html+='</tbody></table>';
+    html += `<tr class="total-row"><td>TOTAL</td><td style="text-align:center">${tqtd}</td><td>${fBRL(tcusto)}</td></tr>`;
+    html += '</tbody></table>';
     return html;
   };
 
