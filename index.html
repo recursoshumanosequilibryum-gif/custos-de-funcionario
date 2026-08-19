@@ -5259,6 +5259,7 @@ function renderEvolucao() {
     const parseBRV = v => {
       if (!v && v !== 0) return 0;
       const s = String(v).trim();
+      if (!s || s === '0') return 0;
       if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
       return parseFloat(s) || 0;
     };
@@ -5267,12 +5268,23 @@ function renderEvolucao() {
       const eid = f.empresaId; const comp = f.competencia;
       if (!eid || !comp || !dados[eid]) return;
       const funcs = f.funcionarios || [];
-      dados[eid][comp].pessoas = funcs.length;
-      dados[eid][comp].custo = funcs.reduce((s,fn) => {
+      // Deduplicar por CPF/nome dentro do mesmo mês e empresa
+      if (!dados[eid][comp].vistos) dados[eid][comp].vistos = new Set();
+      let pessoas = dados[eid][comp].pessoas || 0;
+      let custo   = dados[eid][comp].custo   || 0;
+      funcs.forEach(fn => {
+        const cpfK  = (fn.cpf||'').replace(/\D/g,'');
+        const nomeK = normalize(fn.nome);
+        const chave = cpfK || nomeK;
+        if (dados[eid][comp].vistos.has(chave)) return;
+        dados[eid][comp].vistos.add(chave);
+        pessoas++;
         const prov = parseBRV(fn.proventos);
         const sal  = parseBRV(fn.salario);
-        return s + (prov > 0 ? prov : sal);
-      }, 0);
+        custo += prov > 0 ? prov : sal;
+      });
+      dados[eid][comp].pessoas = pessoas;
+      dados[eid][comp].custo   = custo;
     });
 
     const mkDatasets = tipo => empresaIds.map((eid,i) => ({
@@ -5341,38 +5353,53 @@ function renderEvolucao() {
     mapCadNome[normalize(f.nome)] = f.departamento;
   });
 
-  // Função para parsear valor BR corretamente ("8.475,55" -> 8475.55)
+  // Parser de valor BR ("8.475,55" -> 8475.55, 8475.55 -> 8475.55)
   const parseBRVal = v => {
     if (!v && v !== 0) return 0;
     const s = String(v).trim();
-    // Formato BR: 8.475,55
+    if (!s || s === '0') return 0;
     if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
-    // Já em decimal
     return parseFloat(s) || 0;
   };
 
+  // Mapa de salário do cadastro: CPF/nome -> salario (fallback confiável)
+  const mapSalCPF  = {};
+  const mapSalNome = {};
+  DB.funcionarios.forEach(f => {
+    const sal = parseBRVal(f.salario);
+    if (!sal) return;
+    const cpfK = (f.cpf||'').replace(/\D/g,'');
+    if (cpfK) mapSalCPF[cpfK] = sal;
+    mapSalNome[normalize(f.nome)] = sal;
+  });
+
+  // Processar folhas — deduplicar por CPF/nome dentro do mesmo mês
+  // (evita contar Eliane 2x se ela aparecer em MATRIZ e LONGHI no mesmo mês)
   folhasFilt.forEach(f => {
     const comp = f.competencia;
     (f.funcionarios||[]).forEach(fn => {
-      // Buscar departamento atualizado do cadastro (após sincronização)
       const cpfKey  = (fn.cpf||'').replace(/\D/g,'');
       const nomeKey = normalize(fn.nome);
       const dep = mapCadCPF[cpfKey] || mapCadNome[nomeKey] || fn.departamento || '';
 
-      if (!dep) return; // sem departamento = ignora
-      if (!dados2[dep]) return; // não está nos deptos filtrados = ignora
-
-      // Se filtro de depto específico aplicado
+      if (!dep) return;
+      if (!dados2[dep]) return;
       if (depto && dep !== depto) return;
 
-      if (!dados2[dep][comp]) dados2[dep][comp] = { custo:0, pessoas:0 };
+      if (!dados2[dep][comp]) dados2[dep][comp] = { custo:0, pessoas:0, vistos: new Set() };
+
+      // Chave única por funcionário no mês (CPF prioritário, senão nome)
+      const chave = cpfKey || nomeKey;
+      if (dados2[dep][comp].vistos.has(chave)) return; // já contou esse funcionário
+      dados2[dep][comp].vistos.add(chave);
+
       dados2[dep][comp].pessoas += 1;
 
-      // Usar proventos da folha se disponível, senão salário
-      // Garantir parse correto de valores BR
-      const prov = parseBRVal(fn.proventos);
-      const sal  = parseBRVal(fn.salario);
-      dados2[dep][comp].custo += (prov > 0 ? prov : sal);
+      // CUSTO: proventos folha > salário folha > salário cadastro
+      const prov     = parseBRVal(fn.proventos);
+      const salFolha = parseBRVal(fn.salario);
+      const salCad   = mapSalCPF[cpfKey] || mapSalNome[nomeKey] || 0;
+      dados2[dep][comp].custo += prov > 0 ? prov : (salFolha > 0 ? salFolha : salCad);
     });
   });
 
@@ -5844,6 +5871,7 @@ function renderDiagnostico() {
   const parseBRD = v => {
     if (!v && v !== 0) return 0;
     const s = String(v).trim();
+    if (!s || s === '0') return 0;
     if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
     return parseFloat(s) || 0;
   };
