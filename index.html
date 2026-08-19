@@ -5993,183 +5993,245 @@ function renderDiagnostico() {
 
 
 function exportarRelatorioHTML() {
-  // Capturar imagens dos gráficos existentes
   const c1 = document.getElementById('chart-custo');
   const c2 = document.getElementById('chart-pessoas');
   if (!c1 || !c2) { toast('Gere o gráfico primeiro clicando em Atualizar.', 'warn'); return; }
 
   const img1 = c1.toDataURL('image/png');
   const img2 = c2.toDataURL('image/png');
-
-  // Capturar tabelas
   const tabelaCusto   = document.getElementById('evo-tabela-custo')?.innerHTML   || '';
   const tabelaPessoas = document.getElementById('evo-tabela-pessoas')?.innerHTML || '';
 
-  // Meta info
+  // Meta
   const visao   = document.getElementById('evo-visao')?.value || 'empresa';
   const empEl   = document.getElementById('evo-empresa');
+  const empId   = empEl?.value || '';
   const empNome = empEl?.options[empEl.selectedIndex]?.text || 'Todas as Empresas';
   const deptoEl = document.getElementById('evo-depto');
-  const deptoNome = deptoEl?.value ? (deptoEl.options[deptoEl.selectedIndex]?.text || '') : '';
+  const deptoNome = deptoEl?.value ? (deptoEl.options[deptoEl.selectedIndex]?.text||'') : '';
   const de  = document.getElementById('evo-de')?.value  || '';
   const ate = document.getElementById('evo-ate')?.value || '';
-  const mesesN = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
-                  'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-  const fmtM = m => { if(!m) return ''; const [y,mo]=m.split('-'); return (mesesN[(parseInt(mo)||1)-1]||'')+' de '+y; };
+  const mesesN3 = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                   'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const mesesC  = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const fmtM  = m => { if(!m) return ''; const [y,mo]=m.split('-'); return (mesesN3[(parseInt(mo)||1)-1]||'')+' de '+y; };
+  const fmtMC = m => { if(!m) return ''; const [y,mo]=m.split('-'); return (mesesC[(parseInt(mo)||1)-1]||'')+'/'+y; };
   const periodo = de && ate ? fmtM(de)+' a '+fmtM(ate) : de ? 'a partir de '+fmtM(de) : ate ? 'até '+fmtM(ate) : 'Período Completo';
-  const visaoLabel = visao === 'depto' ? 'Por Departamento'+(deptoNome?' — '+deptoNome:'') : 'Por Unidade/Empresa';
+  const visaoLabel = visao==='depto' ? 'Por Departamento'+(deptoNome?' — '+deptoNome:'') : 'Por Unidade/Empresa';
   const hoje = new Date().toLocaleDateString('pt-BR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-  const hojeShort = new Date().toLocaleDateString('pt-BR');
-  const titulo1 = document.getElementById('evo-title-custo')?.textContent || 'Evolução do Custo Financeiro';
-  const titulo2 = document.getElementById('evo-title-pessoas')?.textContent || 'Evolução do Quadro de Pessoas';
+  const hojeS = new Date().toLocaleDateString('pt-BR');
+  const t1 = document.getElementById('evo-title-custo')?.textContent  || 'Evolução do Custo Financeiro';
+  const t2 = document.getElementById('evo-title-pessoas')?.textContent || 'Evolução do Quadro de Pessoas';
 
-  // Limpar estilos inline das tabelas para reestilizar no relatório
-  const limparTabela = html => html
-    .replace(/style="[^"]*background:[^"]*var\(--teal-xlt\)[^"]*"/g, 'class="row-even"')
-    .replace(/style="[^"]*background:#fff[^"]*"/g, 'class="row-odd"')
-    .replace(/style="[^"]*background:#1A4A45[^"]*"/g, 'class="row-total"');
+  // Parser BR
+  const pBR = v => {
+    if(!v && v!==0) return 0;
+    const s=String(v).trim(); if(!s||s==='0') return 0;
+    if(s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.'))||0;
+    return parseFloat(s)||0;
+  };
+  const fBRL = v => v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+
+  // ── Coletar dados de demissões das folhas ─────────────────────
+  const folhasFilt = (DB.folhas||[]).filter(f => {
+    if(empId && f.empresaId!==empId) return false;
+    if(de  && (f.competencia||'')<de)  return false;
+    if(ate && (f.competencia||'')>ate) return false;
+    return true;
+  }).sort((a,b)=>(a.competencia||'').localeCompare(b.competencia||''));
+
+  // Mapa depto do cadastro
+  const cadDep = {};
+  DB.funcionarios.forEach(f => {
+    if(!f.departamento) return;
+    const k=(f.cpf||'').replace(/\D/g,'');
+    if(k) cadDep[k]=f.departamento;
+    cadDep['n:'+normalize(f.nome)]=f.departamento;
+  });
+  const getDepDem = fn => {
+    const k=(fn.cpf||'').replace(/\D/g,'');
+    return cadDep[k]||cadDep['n:'+normalize(fn.nome)]||fn.departamento||'Não definido';
+  };
+
+  // Demitidos por empresa e por departamento
+  const demPorEmp  = {}; // empNome -> [{comp, nome, prov, dep}]
+  const demPorDep  = {}; // dep -> [{comp, nome, prov, emp}]
+  const demPorMes  = {}; // comp -> {qtd, total}
+
+  folhasFilt.forEach(folha => {
+    const comp = folha.competencia||'';
+    const eNome = folha.empresaNome||'';
+    (folha.funcionarios||[]).forEach(fn => {
+      if((fn.situacao||'').toLowerCase()!=='demitido') return;
+      const prov = pBR(fn.proventos)||pBR(fn.salario)||0;
+      const dep  = getDepDem(fn);
+
+      if(!demPorEmp[eNome]) demPorEmp[eNome]=[];
+      demPorEmp[eNome].push({comp,nome:fn.nome,prov,dep,cargo:fn.cargo||''});
+
+      if(!demPorDep[dep]) demPorDep[dep]=[];
+      demPorDep[dep].push({comp,nome:fn.nome,prov,empresa:eNome,cargo:fn.cargo||''});
+
+      if(!demPorMes[comp]) demPorMes[comp]={qtd:0,total:0};
+      demPorMes[comp].qtd++;
+      demPorMes[comp].total+=prov;
+    });
+  });
+
+  const totalDemitidos = Object.values(demPorEmp).flat().length;
+  const totalCustoDem  = Object.values(demPorEmp).flat().reduce((s,d)=>s+d.prov,0);
+
+  // ── Gerar HTML da tabela de demissões por empresa ─────────────
+  const buildTabelaDemEmp = () => {
+    if(!Object.keys(demPorEmp).length) return '<p style="color:#718096;font-size:.82rem;padding:16px">Nenhuma demissão no período selecionado.</p>';
+    let html='<table><thead><tr><th>Empresa</th><th>Mês</th><th>Funcionário</th><th>Cargo</th><th>Departamento</th><th>Custo</th></tr></thead><tbody>';
+    let gtotal=0;
+    Object.entries(demPorEmp).sort().forEach(([emp,dems])=>{
+      const tot=dems.reduce((s,d)=>s+d.prov,0);
+      gtotal+=tot;
+      dems.sort((a,b)=>a.comp.localeCompare(b.comp)).forEach((d,i)=>{
+        html+=`<tr class="${i%2===0?'even':'odd'}">
+          ${i===0?`<td rowspan="${dems.length}" style="font-weight:700;color:#2C7A72;vertical-align:top;background:#F4FAFA">${emp}</td>`:''}
+          <td>${fmtMC(d.comp)}</td>
+          <td style="font-weight:600">${d.nome}</td>
+          <td style="color:#718096;font-size:.75rem">${d.cargo}</td>
+          <td>${d.dep}</td>
+          <td style="font-weight:700;color:#1A4A45">${fBRL(d.prov)}</td>
+        </tr>`;
+      });
+      html+=`<tr class="subtotal-row"><td></td><td colspan="4" style="font-weight:700;text-align:right">Subtotal ${emp}</td><td style="font-weight:800">${fBRL(tot)}</td></tr>`;
+    });
+    html+=`<tr class="total-row"><td colspan="5" style="font-weight:800">TOTAL GERAL</td><td style="font-weight:800">${fBRL(gtotal)}</td></tr>`;
+    html+='</tbody></table>';
+    return html;
+  };
+
+  // ── Gerar HTML da tabela de demissões por departamento ────────
+  const buildTabelaDemDep = () => {
+    if(!Object.keys(demPorDep).length) return '<p style="color:#718096;font-size:.82rem;padding:16px">Nenhuma demissão no período selecionado.</p>';
+    let html='<table><thead><tr><th>Departamento</th><th>Mês</th><th>Funcionário</th><th>Empresa</th><th>Custo</th></tr></thead><tbody>';
+    let gtotal=0;
+    Object.entries(demPorDep).sort().forEach(([dep,dems])=>{
+      const tot=dems.reduce((s,d)=>s+d.prov,0);
+      gtotal+=tot;
+      dems.sort((a,b)=>a.comp.localeCompare(b.comp)).forEach((d,i)=>{
+        html+=`<tr class="${i%2===0?'even':'odd'}">
+          ${i===0?`<td rowspan="${dems.length}" style="font-weight:700;color:#2C7A72;vertical-align:top;background:#F4FAFA">${dep}</td>`:''}
+          <td>${fmtMC(d.comp)}</td>
+          <td style="font-weight:600">${d.nome}</td>
+          <td style="color:#718096;font-size:.75rem">${d.empresa}</td>
+          <td style="font-weight:700;color:#1A4A45">${fBRL(d.prov)}</td>
+        </tr>`;
+      });
+      html+=`<tr class="subtotal-row"><td></td><td colspan="3" style="font-weight:700;text-align:right">Subtotal ${dep}</td><td style="font-weight:800">${fBRL(tot)}</td></tr>`;
+    });
+    html+=`<tr class="total-row"><td colspan="4" style="font-weight:800">TOTAL GERAL</td><td style="font-weight:800">${fBRL(gtotal)}</td></tr>`;
+    html+='</tbody></table>';
+    return html;
+  };
+
+  // ── Resumo mensal de demissões ────────────────────────────────
+  const buildResumoMensal = () => {
+    if(!Object.keys(demPorMes).length) return '';
+    let html='<table><thead><tr><th>Mês</th><th>Demissões</th><th>Custo Total</th></tr></thead><tbody>';
+    let tqtd=0,tcusto=0;
+    Object.entries(demPorMes).sort().forEach(([comp,v],i)=>{
+      html+=`<tr class="${i%2===0?'even':'odd'}"><td>${fmtMC(comp)}</td><td style="text-align:center">${v.qtd}</td><td style="font-weight:700;color:#1A4A45">${fBRL(v.total)}</td></tr>`;
+      tqtd+=v.qtd; tcusto+=v.total;
+    });
+    html+=`<tr class="total-row"><td>TOTAL</td><td style="text-align:center">${tqtd}</td><td>${fBRL(tcusto)}</td></tr>`;
+    html+='</tbody></table>';
+    return html;
+  };
 
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Relatório de Evolução de Custos — Equilibrym</title>
+<title>Relatório Gerencial RH — Equilibrym</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-  *{box-sizing:border-box;margin:0;padding:0}
-  :root{
-    --teal:#2C7A72;--teal-dk:#1A4A45;--teal-lt:#E8F5F4;
-    --slate:#4A5A72;--text:#2D3748;--muted:#718096;
-    --border:#E2E8F0;--bg:#F7FAFC;--white:#fff;
-    --accent:#3D9E96;
-  }
-  body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--teal:#2C7A72;--teal-dk:#1A4A45;--teal-lt:#E8F5F4;--slate:#4A5A72;--text:#2D3748;--muted:#718096;--border:#E2E8F0;--bg:#F7FAFC;--white:#fff}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:13px}
 
-  /* CAPA */
-  .cover{
-    background:linear-gradient(135deg,#1A4A45 0%,#2C7A72 50%,#3D9E96 100%);
-    min-height:100vh;display:flex;flex-direction:column;
-    justify-content:center;padding:60px;position:relative;overflow:hidden;
-    page-break-after:always;
-  }
-  .cover::before{
-    content:'';position:absolute;top:-100px;right:-100px;width:500px;height:500px;
-    border-radius:50%;background:rgba(255,255,255,0.04);
-  }
-  .cover::after{
-    content:'';position:absolute;bottom:-80px;left:200px;width:350px;height:350px;
-    border-radius:50%;background:rgba(255,255,255,0.03);
-  }
-  .cover-logo{
-    width:72px;height:72px;background:rgba(255,255,255,0.15);border-radius:18px;
-    display:flex;align-items:center;justify-content:center;font-size:34px;
-    margin-bottom:48px;backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);
-  }
-  .cover-tag{
-    display:inline-block;background:rgba(255,255,255,0.12);color:rgba(255,255,255,0.85);
-    padding:5px 14px;border-radius:20px;font-size:11px;font-weight:600;
-    letter-spacing:1.5px;text-transform:uppercase;margin-bottom:20px;
-    border:1px solid rgba(255,255,255,0.2);
-  }
-  .cover h1{
-    font-size:3rem;font-weight:800;color:#fff;line-height:1.1;margin-bottom:16px;
-    max-width:700px;letter-spacing:-0.5px;
-  }
-  .cover h1 span{color:rgba(255,255,255,0.6);font-weight:300}
-  .cover-sub{font-size:1.1rem;color:rgba(255,255,255,0.7);margin-bottom:48px;font-weight:400}
-  .cover-meta{
-    display:flex;gap:40px;margin-top:auto;padding-top:48px;
-    border-top:1px solid rgba(255,255,255,0.15);
-  }
-  .cover-meta-item .lbl{font-size:10px;font-weight:700;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
-  .cover-meta-item .val{font-size:13px;color:rgba(255,255,255,0.9);font-weight:500}
+/* CAPA */
+.cover{background:linear-gradient(135deg,#1A4A45 0%,#2C7A72 55%,#3D9E96 100%);min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:64px;position:relative;overflow:hidden;page-break-after:always}
+.cover::before{content:'';position:absolute;top:-120px;right:-80px;width:480px;height:480px;border-radius:50%;background:rgba(255,255,255,0.04)}
+.cover::after{content:'';position:absolute;bottom:-60px;left:180px;width:320px;height:320px;border-radius:50%;background:rgba(255,255,255,0.03)}
+.cover-logo{width:68px;height:68px;background:rgba(255,255,255,0.15);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:32px;margin-bottom:44px;border:1px solid rgba(255,255,255,0.2)}
+.cover-tag{display:inline-block;background:rgba(255,255,255,0.12);color:rgba(255,255,255,0.85);padding:5px 14px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;margin-bottom:18px;border:1px solid rgba(255,255,255,0.2)}
+.cover h1{font-size:2.8rem;font-weight:800;color:#fff;line-height:1.1;margin-bottom:12px;max-width:680px}
+.cover h1 span{color:rgba(255,255,255,0.55);font-weight:300}
+.cover-sub{font-size:1rem;color:rgba(255,255,255,0.65);margin-bottom:52px}
+.cover-meta{display:flex;gap:40px;padding-top:40px;border-top:1px solid rgba(255,255,255,0.15)}
+.cover-meta-item .lbl{font-size:9px;font-weight:700;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:5px}
+.cover-meta-item .val{font-size:13px;color:rgba(255,255,255,0.9);font-weight:500}
 
-  /* LAYOUT */
-  .page{padding:52px 60px;max-width:1100px;margin:0 auto}
-  .section{margin-bottom:52px;page-break-inside:avoid}
+/* LAYOUT */
+.page{padding:48px 56px;max-width:1100px;margin:0 auto}
+.section{margin-bottom:48px}
 
-  /* HEADER DE SEÇÃO */
-  .sec-header{
-    display:flex;align-items:center;gap:12px;margin-bottom:24px;
-    padding-bottom:14px;border-bottom:2px solid var(--teal-lt);
-  }
-  .sec-icon{
-    width:38px;height:38px;background:linear-gradient(135deg,var(--teal),var(--accent));
-    border-radius:10px;display:flex;align-items:center;justify-content:center;
-    font-size:17px;flex-shrink:0;
-  }
-  .sec-title{font-size:1.2rem;font-weight:700;color:var(--teal-dk)}
-  .sec-sub{font-size:.82rem;color:var(--muted);margin-top:1px}
+/* SUMMARY CARDS */
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:36px}
+.kcard{background:#fff;border-radius:12px;padding:20px 22px;border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,.05);border-top:3px solid var(--teal)}
+.kcard.red{border-top-color:#C53030}
+.kcard.orange{border-top-color:#c05621}
+.kcard.green{border-top-color:#276749}
+.kcard .lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:8px}
+.kcard .val{font-size:1.6rem;font-weight:800;color:var(--teal-dk);line-height:1}
+.kcard.red .val{color:#C53030}
+.kcard.orange .val{color:#c05621}
+.kcard.green .val{color:#276749}
+.kcard .note{font-size:.7rem;color:var(--muted);margin-top:5px}
 
-  /* SUMMARY CARDS */
-  .cards-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:36px}
-  .card{
-    background:var(--white);border-radius:14px;padding:22px 24px;
-    border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,0.05);
-    border-left:4px solid var(--teal);
-  }
-  .card.accent{border-left-color:var(--accent)}
-  .card.dark{border-left-color:var(--teal-dk)}
-  .card-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:8px}
-  .card-val{font-size:1.8rem;font-weight:800;color:var(--teal-dk);line-height:1}
-  .card-note{font-size:.75rem;color:var(--muted);margin-top:6px}
+/* SEÇÃO */
+.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid var(--teal-lt)}
+.sec-icon{width:36px;height:36px;background:linear-gradient(135deg,var(--teal),#3D9E96);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.sec-title{font-size:1.1rem;font-weight:700;color:var(--teal-dk)}
+.sec-sub{font-size:.77rem;color:var(--muted);margin-top:1px}
 
-  /* GRÁFICOS */
-  .chart-wrap{
-    background:var(--white);border-radius:16px;padding:28px 32px;
-    border:1px solid var(--border);box-shadow:0 2px 12px rgba(0,0,0,0.06);
-    margin-bottom:28px;
-  }
-  .chart-wrap h3{font-size:1rem;font-weight:700;color:var(--teal-dk);margin-bottom:6px}
-  .chart-wrap p{font-size:.78rem;color:var(--muted);margin-bottom:20px}
-  .chart-wrap img{width:100%;border-radius:8px}
+/* GRÁFICO */
+.chart-box{background:#fff;border-radius:14px;padding:24px 28px;border:1px solid var(--border);box-shadow:0 2px 10px rgba(0,0,0,.05);margin-bottom:24px}
+.chart-box h3{font-size:.9rem;font-weight:700;color:var(--teal-dk);margin-bottom:4px}
+.chart-box p{font-size:.75rem;color:var(--muted);margin-bottom:16px}
+.chart-box img{width:100%;border-radius:6px}
 
-  /* TABELAS */
-  .table-wrap{
-    background:var(--white);border-radius:16px;overflow:hidden;
-    border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,0.05);
-    margin-bottom:28px;
-  }
-  .table-wrap h3{
-    padding:16px 22px;font-size:.92rem;font-weight:700;color:var(--teal-dk);
-    border-bottom:1px solid var(--border);background:var(--teal-lt);
-  }
-  .table-wrap table{width:100%;border-collapse:collapse;font-size:.78rem}
-  .table-wrap thead tr{background:var(--teal-dk)}
-  .table-wrap th{padding:10px 14px;color:#fff;font-weight:600;font-size:.7rem;text-transform:uppercase;letter-spacing:.4px;text-align:right}
-  .table-wrap th:first-child{text-align:left}
-  .table-wrap td{padding:9px 14px;text-align:right;color:var(--text);border-bottom:1px solid var(--border)}
-  .table-wrap td:first-child{text-align:left;font-weight:600;color:var(--teal-dk)}
-  .table-wrap tbody tr:nth-child(even){background:#F4FAFA}
-  .table-wrap tbody tr:last-child{background:var(--teal-dk)!important}
-  .table-wrap tbody tr:last-child td{color:#fff!important;font-weight:700!important;border:none}
+/* TABELA */
+.tbl-box{background:#fff;border-radius:14px;overflow:hidden;border:1px solid var(--border);box-shadow:0 2px 8px rgba(0,0,0,.04);margin-bottom:24px}
+.tbl-box-hdr{padding:14px 20px;background:var(--teal-lt);border-bottom:1px solid var(--border);font-size:.85rem;font-weight:700;color:var(--teal-dk);display:flex;align-items:center;gap:8px}
+.tbl-box table{width:100%;border-collapse:collapse;font-size:.75rem}
+.tbl-box thead tr{background:var(--teal-dk)}
+.tbl-box th{padding:9px 14px;color:#fff;font-weight:600;font-size:.68rem;text-transform:uppercase;letter-spacing:.4px;text-align:right}
+.tbl-box th:first-child{text-align:left}
+.tbl-box td{padding:8px 14px;text-align:right;border-bottom:1px solid var(--border)}
+.tbl-box td:first-child{text-align:left;font-weight:500}
+.tbl-box tr.even{background:#F4FAFA}
+.tbl-box tr.odd{background:#fff}
+.tbl-box tr.subtotal-row td{background:#EEF1F5;font-size:.72rem;color:var(--slate);border-top:1px solid var(--border)}
+.tbl-box tr.total-row td{background:var(--teal-dk)!important;color:#fff!important;font-weight:700!important;font-size:.8rem;border:none}
 
-  /* RODAPÉ */
-  .footer{
-    background:var(--teal-dk);color:rgba(255,255,255,0.6);
-    padding:24px 60px;display:flex;justify-content:space-between;
-    align-items:center;font-size:.75rem;margin-top:52px;
-    page-break-inside:avoid;
-  }
-  .footer strong{color:rgba(255,255,255,0.9)}
+/* DIVIDER */
+.divider{height:1px;background:var(--border);margin:36px 0}
 
-  /* DIVIDER */
-  .divider{height:1px;background:var(--border);margin:36px 0}
+/* NOTA */
+.nota{background:var(--teal-lt);border-left:3px solid var(--teal);padding:11px 15px;border-radius:0 8px 8px 0;font-size:.77rem;color:var(--teal-dk);margin-bottom:24px}
 
-  /* NOTA */
-  .nota{
-    background:var(--teal-lt);border-left:3px solid var(--teal);
-    padding:12px 16px;border-radius:0 8px 8px 0;font-size:.78rem;
-    color:var(--teal-dk);margin-bottom:24px;
-  }
+/* FOOTER */
+.footer{background:var(--teal-dk);color:rgba(255,255,255,.6);padding:20px 56px;display:flex;justify-content:space-between;align-items:center;font-size:.72rem;margin-top:48px}
+.footer strong{color:rgba(255,255,255,.9)}
 
-  @media print{
-    body{background:#fff}
-    .cover{page-break-after:always}
-    .section{page-break-inside:avoid}
-    @page{margin:0;size:A4 landscape}
-  }
+/* GRID 2 colunas */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+
+@media print{
+  body{background:#fff}
+  .cover{page-break-after:always;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .section{page-break-inside:avoid}
+  .tbl-box{page-break-inside:avoid}
+  .divider+.section{page-break-before:always}
+  @page{margin:0;size:A4 landscape}
+}
 </style>
 </head>
 <body>
@@ -6177,44 +6239,59 @@ function exportarRelatorioHTML() {
 <!-- CAPA -->
 <div class="cover">
   <div class="cover-logo">🏥</div>
-  <div class="cover-tag">Relatório Gerencial de RH</div>
-  <h1>Evolução de Custos<br><span>&amp; Quadro de Pessoas</span></h1>
+  <div class="cover-tag">Relatório Gerencial de Recursos Humanos</div>
+  <h1>Evolução de Custos, Pessoas<br><span>&amp; Análise de Desligamentos</span></h1>
   <div class="cover-sub">${empNome}</div>
   <div class="cover-meta">
     <div class="cover-meta-item"><div class="lbl">Período</div><div class="val">${periodo}</div></div>
     <div class="cover-meta-item"><div class="lbl">Visão</div><div class="val">${visaoLabel}</div></div>
-    <div class="cover-meta-item"><div class="lbl">Emitido em</div><div class="val">${hojeShort}</div></div>
-    <div class="cover-meta-item"><div class="lbl">Sistema</div><div class="val">Equilibrym RH</div></div>
+    <div class="cover-meta-item"><div class="lbl">Total Desligamentos</div><div class="val">${totalDemitidos} funcionário(s)</div></div>
+    <div class="cover-meta-item"><div class="lbl">Emitido em</div><div class="val">${hojeS}</div></div>
   </div>
 </div>
 
 <!-- CONTEÚDO -->
 <div class="page">
 
-  <!-- NOTA -->
-  <div class="nota">
-    📋 Este relatório foi gerado automaticamente a partir dos dados de folha de pagamento importados no sistema.
-    As informações refletem os proventos brutos mensais por ${visaoLabel.toLowerCase()}.
+  <div class="nota">📋 Relatório gerado automaticamente a partir das folhas de pagamento importadas no sistema Equilibrym RH. Valores em proventos brutos mensais.</div>
+
+  <!-- KPIs -->
+  <div class="cards">
+    <div class="kcard">
+      <div class="lbl">💰 Folhas Analisadas</div>
+      <div class="val">${folhasFilt.length}</div>
+      <div class="note">competências no período</div>
+    </div>
+    <div class="kcard red">
+      <div class="lbl">❌ Total Desligamentos</div>
+      <div class="val">${totalDemitidos}</div>
+      <div class="note">funcionários no período</div>
+    </div>
+    <div class="kcard orange">
+      <div class="lbl">💸 Custo Desligamentos</div>
+      <div class="val" style="font-size:1.2rem">${fBRL(totalCustoDem)}</div>
+      <div class="note">em proventos de saída</div>
+    </div>
+    <div class="kcard green">
+      <div class="lbl">📋 Visão</div>
+      <div class="val" style="font-size:1rem">${visao==='depto'?'Depto':'Unidade'}</div>
+      <div class="note">${visaoLabel}</div>
+    </div>
   </div>
 
   <!-- SEÇÃO 1: CUSTO FINANCEIRO -->
   <div class="section">
-    <div class="sec-header">
+    <div class="sec-hdr">
       <div class="sec-icon">💰</div>
-      <div>
-        <div class="sec-title">${titulo1}</div>
-        <div class="sec-sub">Proventos brutos mensais — valores em R$</div>
-      </div>
+      <div><div class="sec-title">${t1}</div><div class="sec-sub">Proventos brutos mensais em R$</div></div>
     </div>
-
-    <div class="chart-wrap">
-      <h3>${titulo1}</h3>
-      <p>Evolução mês a mês dos proventos brutos totais por ${visao === 'depto' ? 'departamento' : 'unidade'}</p>
-      <img src="${img1}" alt="Gráfico de Evolução de Custos">
+    <div class="chart-box">
+      <h3>${t1}</h3>
+      <p>Evolução mês a mês — ${visaoLabel}</p>
+      <img src="${img1}" alt="Gráfico Evolução de Custos">
     </div>
-
-    <div class="table-wrap">
-      <h3>📋 Dados — Custo por ${visao === 'depto' ? 'Departamento' : 'Unidade'} (R$)</h3>
+    <div class="tbl-box">
+      <div class="tbl-box-hdr">📋 Custo por ${visao==='depto'?'Departamento':'Unidade'} — R$</div>
       ${tabelaCusto}
     </div>
   </div>
@@ -6223,49 +6300,85 @@ function exportarRelatorioHTML() {
 
   <!-- SEÇÃO 2: QUADRO DE PESSOAS -->
   <div class="section">
-    <div class="sec-header">
+    <div class="sec-hdr">
       <div class="sec-icon">👥</div>
-      <div>
-        <div class="sec-title">${titulo2}</div>
-        <div class="sec-sub">Quantidade de funcionários ativos mês a mês</div>
+      <div><div class="sec-title">${t2}</div><div class="sec-sub">Quantidade de funcionários mês a mês</div></div>
+    </div>
+    <div class="chart-box">
+      <h3>${t2}</h3>
+      <p>Evolução do quadro — ${visaoLabel}</p>
+      <img src="${img2}" alt="Gráfico Evolução de Pessoas">
+    </div>
+    <div class="tbl-box">
+      <div class="tbl-box-hdr">📋 Headcount por ${visao==='depto'?'Departamento':'Unidade'}</div>
+      ${tabelaPessoas}
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- SEÇÃO 3: DESLIGAMENTOS -->
+  <div class="section">
+    <div class="sec-hdr">
+      <div class="sec-icon">❌</div>
+      <div><div class="sec-title">Análise de Desligamentos</div><div class="sec-sub">Funcionários demitidos no período — custo e distribuição</div></div>
+    </div>
+
+    <div class="grid2" style="margin-bottom:24px">
+      <!-- Resumo mensal -->
+      <div class="tbl-box">
+        <div class="tbl-box-hdr">📅 Resumo Mensal de Desligamentos</div>
+        ${buildResumoMensal() || '<p style="padding:16px;color:var(--muted);font-size:.8rem">Nenhuma demissão no período.</p>'}
+      </div>
+      <!-- Nota explicativa -->
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="background:#FFF5F5;border-radius:12px;padding:20px;border:1px solid #FED7D7">
+          <div style="font-size:1.4rem;font-weight:800;color:#C53030;margin-bottom:4px">${totalDemitidos}</div>
+          <div style="font-size:.8rem;font-weight:600;color:#C53030;margin-bottom:8px">TOTAL DE DESLIGAMENTOS</div>
+          <div style="font-size:.75rem;color:#718096">Funcionários desligados no período selecionado</div>
+        </div>
+        <div style="background:#FFF8F0;border-radius:12px;padding:20px;border:1px solid #FBD38D">
+          <div style="font-size:1.4rem;font-weight:800;color:#c05621;margin-bottom:4px">${fBRL(totalCustoDem)}</div>
+          <div style="font-size:.8rem;font-weight:600;color:#c05621;margin-bottom:8px">CUSTO TOTAL DOS DESLIGAMENTOS</div>
+          <div style="font-size:.75rem;color:#718096">Proventos da competência de saída</div>
+        </div>
       </div>
     </div>
 
-    <div class="chart-wrap">
-      <h3>${titulo2}</h3>
-      <p>Evolução do quadro de pessoas por ${visao === 'depto' ? 'departamento' : 'unidade'}</p>
-      <img src="${img2}" alt="Gráfico de Evolução de Pessoas">
+    <!-- Por empresa -->
+    <div class="tbl-box" style="margin-bottom:20px">
+      <div class="tbl-box-hdr">🏢 Desligamentos por Empresa</div>
+      ${buildTabelaDemEmp()}
     </div>
 
-    <div class="table-wrap">
-      <h3>📋 Dados — Headcount por ${visao === 'depto' ? 'Departamento' : 'Unidade'}</h3>
-      ${tabelaPessoas}
+    <!-- Por departamento -->
+    <div class="tbl-box">
+      <div class="tbl-box-hdr">🗂️ Desligamentos por Departamento</div>
+      ${buildTabelaDemDep()}
     </div>
   </div>
 
 </div>
 
-<!-- RODAPÉ -->
+<!-- FOOTER -->
 <div class="footer">
   <div><strong>Equilibrym Especialidades Médicas &amp; Terapêuticas</strong> — Relatório Gerencial de RH</div>
-  <div>Gerado em ${hoje} &nbsp;·&nbsp; Equilibrym RH Sistema</div>
+  <div>Gerado em ${hoje} &nbsp;·&nbsp; Equilibrym RH Sistema &nbsp;·&nbsp; Uso restrito à diretoria</div>
 </div>
 
 </body>
 </html>`;
 
-  // Abrir em nova aba
   const blob = new Blob([html], {type:'text/html;charset=utf-8'});
   const url  = URL.createObjectURL(blob);
   const win  = window.open(url, '_blank');
   if (!win) {
-    // Fallback: download direto
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'Relatorio_Evolucao_Custos_'+new Date().toISOString().slice(0,10)+'.html';
+    a.download = 'Relatorio_Gerencial_RH_'+new Date().toISOString().slice(0,10)+'.html';
     a.click();
   }
-  toast('✅ Relatório gerado! Use Ctrl+P para imprimir ou salvar como PDF.');
+  toast('✅ Relatório gerado! Use Ctrl+P para salvar como PDF.');
 }
 
 function exportarEvolucaoPPT() {
