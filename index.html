@@ -418,8 +418,12 @@
       <div>
         <h1 style="font-size:1.3rem;font-weight:800;color:var(--slate-dk)">🔗 Vincular Funcionários a Departamentos</h1>
         <p style="font-size:.82rem;color:var(--muted);margin-top:4px">Corrija funcionários sem departamento ou com departamento errado</p>
+        <div class="alert alert-info" style="margin-top:10px;font-size:.8rem">
+          💡 Após vincular, clique em <strong>🔄 Sincronizar Folhas</strong> para atualizar os departamentos em todas as folhas importadas e corrigir os gráficos de Evolução de Custos.
+        </div>
       </div>
       <div style="display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="sincronizarDeptosFolhas()" title="Propaga os departamentos do cadastro para todas as folhas importadas">🔄 Sincronizar Folhas</button>
         <button class="btn btn-success btn-sm" onclick="vincularTodos()">✅ Salvar Todos</button>
       </div>
     </div>
@@ -5672,8 +5676,86 @@ function vincularTodos() {
   });
 
   saveDB();
-  toast(`✅ ${count} funcionário(s) atualizados!`);
-  setTimeout(() => renderVincularDeptos(), 300);
+  toast(`✅ ${count} funcionário(s) salvos! Sincronizando folhas...`);
+  setTimeout(() => {
+    sincronizarDeptosFolhas();
+  }, 400);
+}
+
+
+// ═══════════════════════════════════════════════════════
+// SINCRONIZAR DEPARTAMENTOS NAS FOLHAS
+// ═══════════════════════════════════════════════════════
+
+function sincronizarDeptosFolhas() {
+  if (!DB.funcionarios.length) {
+    toast('Nenhum funcionário cadastrado.', 'warn');
+    return;
+  }
+  if (!(DB.folhas||[]).length) {
+    toast('Nenhuma folha importada.', 'warn');
+    return;
+  }
+
+  // Construir mapa rápido: CPF -> departamento, nome normalizado -> departamento
+  const mapaCPF  = {};
+  const mapaNome = {};
+  DB.funcionarios.forEach(f => {
+    if (!f.departamento) return;
+    if (f.cpf) mapaCPF[f.cpf.replace(/\D/g,'')] = f.departamento;
+    mapaNome[normalize(f.nome)] = f.departamento;
+  });
+
+  let totalFolhas = 0;
+  let totalFuncs  = 0;
+  let totalAtualizados = 0;
+
+  DB.folhas.forEach(folha => {
+    totalFolhas++;
+    (folha.funcionarios || []).forEach(ff => {
+      totalFuncs++;
+      // Buscar departamento pelo CPF ou nome
+      const cpfKey  = (ff.cpf||'').replace(/\D/g,'');
+      const nomeKey = normalize(ff.nome);
+      const novoDepto = mapaCPF[cpfKey] || mapaNome[nomeKey] || ff.departamento || '';
+
+      if (novoDepto && novoDepto !== ff.departamento) {
+        ff.departamento = novoDepto;
+        totalAtualizados++;
+      }
+    });
+  });
+
+  // Também sincronizar funcionários dentro de folhas onde o depto do cadastro mudou
+  // (retroativo: pegar a versão mais atual do departamento para cada func na folha)
+  DB.folhas.forEach(folha => {
+    (folha.funcionarios || []).forEach(ff => {
+      const cpfKey  = (ff.cpf||'').replace(/\D/g,'');
+      const nomeKey = normalize(ff.nome);
+      const deptoCad = mapaCPF[cpfKey] || mapaNome[nomeKey];
+      if (deptoCad) ff.departamento = deptoCad;
+    });
+  });
+
+  saveDB();
+
+  const msg = `🔄 Sincronização concluída!\n${totalFolhas} folha(s) · ${totalFuncs} registros · ${totalAtualizados} departamentos atualizados.`;
+  toast(msg.replace(/\n/g,' '));
+  console.log(msg);
+
+  // Mostrar resultado com toast mais detalhado
+  if (totalAtualizados > 0) {
+    setTimeout(() => {
+      toast(`✅ ${totalAtualizados} registros de folhas atualizados com os departamentos do cadastro!`);
+    }, 800);
+  } else {
+    setTimeout(() => {
+      toast('✅ Todas as folhas já estavam com os departamentos corretos!');
+    }, 800);
+  }
+
+  // Atualizar a lista
+  setTimeout(() => renderVincularDeptos(), 500);
 }
 
 
