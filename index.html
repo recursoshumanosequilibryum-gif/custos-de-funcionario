@@ -5818,6 +5818,118 @@ function sincronizarDeptosFolhas() {
 }
 
 
+// ═══════════════════════════════════════════════════════
+// DIAGNÓSTICO DE EVOLUÇÃO
+// ═══════════════════════════════════════════════════════
+
+function toggleDiagnostico() {
+  const el = document.getElementById('evo-diagnostico');
+  if (!el) return;
+  if (el.style.display === 'none') {
+    el.style.display = '';
+    renderDiagnostico();
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function renderDiagnostico() {
+  const el = document.getElementById('evo-diagnostico');
+  if (!el) return;
+
+  const de    = document.getElementById('evo-de')?.value    || '';
+  const ate   = document.getElementById('evo-ate')?.value   || '';
+  const empId = document.getElementById('evo-empresa')?.value || '';
+
+  const parseBRD = v => {
+    if (!v && v !== 0) return 0;
+    const s = String(v).trim();
+    if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
+    return parseFloat(s) || 0;
+  };
+
+  // Mapa depto do cadastro
+  const mapD = {};
+  DB.funcionarios.forEach(f => {
+    if (!f.departamento) return;
+    const k = (f.cpf||'').replace(/\D/g,'');
+    if (k) mapD[k] = f.departamento;
+    mapD['n:'+normalize(f.nome)] = f.departamento;
+  });
+
+  const folhas = (DB.folhas||[]).filter(f => {
+    if (empId && f.empresaId !== empId) return false;
+    if (de  && (f.competencia||'') < de)  return false;
+    if (ate && (f.competencia||'') > ate) return false;
+    return true;
+  }).sort((a,b)=>(a.competencia||'').localeCompare(b.competencia||''));
+
+  const mesesN = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const mesLabel = c => {
+    const [y,m] = (c||'').split('-');
+    return (mesesN[(parseInt(m)||1)-1]||'') + '/' + y;
+  };
+
+  let html = `<div class="card"><div class="card-header"><h2>🔍 Diagnóstico — Dados Brutos por Mês</h2>
+    <button class="btn btn-secondary btn-xs" onclick="document.getElementById('evo-diagnostico').style.display='none'">✕ Fechar</button>
+  </div><div class="card-body" style="padding:0;overflow-x:auto">`;
+
+  folhas.forEach(folha => {
+    const comp = folha.competencia;
+    // Agrupar por departamento
+    const byDep = {};
+    (folha.funcionarios||[]).forEach(fn => {
+      const cpfK = (fn.cpf||'').replace(/\D/g,'');
+      const dep = mapD[cpfK] || mapD['n:'+normalize(fn.nome)] || fn.departamento || 'SEM DEPTO';
+      if (!byDep[dep]) byDep[dep] = [];
+      const prov = parseBRD(fn.proventos);
+      const sal  = parseBRD(fn.salario);
+      byDep[dep].push({ nome:fn.nome, prov, sal, custo: prov>0?prov:sal,
+        depFolha: fn.departamento||'-', depCad: mapD[cpfK]||mapD['n:'+normalize(fn.nome)]||'-' });
+    });
+
+    const totalComp = Object.values(byDep).flat().reduce((s,f)=>s+f.custo,0);
+
+    html += `<div style="padding:10px 16px;background:var(--teal-lt);border-bottom:2px solid var(--teal-dk);font-weight:700;font-size:.85rem;color:var(--teal-dk)">
+      📅 ${mesLabel(comp)} — ${folha.empresaNome||''} — Total: ${totalComp.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
+    </div>`;
+
+    Object.entries(byDep).sort().forEach(([dep, funcs]) => {
+      const totDep = funcs.reduce((s,f)=>s+f.custo,0);
+      html += `<div style="padding:6px 16px;background:var(--slate-lt);font-size:.78rem;font-weight:700;color:var(--slate-dk);border-bottom:1px solid var(--border)">
+        📂 ${dep} — ${funcs.length} func. — ${totDep.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:.76rem">
+        <thead><tr style="background:#f0f0f0">
+          <th style="padding:4px 10px;text-align:left;color:var(--slate-dk)">Nome</th>
+          <th style="padding:4px 10px;text-align:left;color:var(--slate-dk)">Depto Folha</th>
+          <th style="padding:4px 10px;text-align:left;color:var(--slate-dk)">Depto Cadastro</th>
+          <th style="padding:4px 10px;text-align:right;color:var(--slate-dk)">Proventos</th>
+          <th style="padding:4px 10px;text-align:right;color:var(--slate-dk)">Salário</th>
+          <th style="padding:4px 10px;text-align:right;font-weight:700;color:var(--teal-dk)">Custo Usado</th>
+        </tr></thead><tbody>`;
+
+      funcs.forEach((f,i) => {
+        const mismatch = f.depFolha !== f.depCad && f.depCad !== '-';
+        html += `<tr style="background:${mismatch?'#FFF5F5':i%2===0?'var(--teal-xlt)':'#fff'};border-bottom:1px solid var(--border)">
+          <td style="padding:4px 10px;font-weight:600;color:var(--teal-dk)">${f.nome}</td>
+          <td style="padding:4px 10px;color:${mismatch?'var(--danger)':'var(--muted)'}">${f.depFolha}</td>
+          <td style="padding:4px 10px;color:var(--success)">${f.depCad}</td>
+          <td style="padding:4px 10px;text-align:right">${f.prov>0?f.prov.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'-'}</td>
+          <td style="padding:4px 10px;text-align:right;color:var(--muted)">${f.sal>0?f.sal.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'-'}</td>
+          <td style="padding:4px 10px;text-align:right;font-weight:700;color:var(--total)">${f.custo.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+        </tr>`;
+      });
+
+      html += '</tbody></table>';
+    });
+  });
+
+  html += '</div></div>';
+  el.innerHTML = html;
+}
+
+
 // BACKUP
 // ═══════════════════════════════════════════════════════
 function exportBackup() {
