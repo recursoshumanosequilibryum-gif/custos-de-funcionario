@@ -668,7 +668,11 @@
   <div style="padding:20px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
       <h1 style="font-size:1.3rem;font-weight:800;color:var(--slate-dk)">📊 Evolução de Custos — Mês a Mês</h1>
-      <button class="btn btn-secondary btn-sm" onclick="toggleDiagnostico()">🔍 Diagnóstico</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary btn-sm" onclick="toggleDiagnostico()">🔍 Diagnóstico</button>
+        <button class="btn btn-success btn-sm" onclick="exportarEvolucaoPPT()">📊 Exportar Excel</button>
+        <button class="btn btn-primary btn-sm" onclick="exportarEvolucaoImagem()">🖼️ Exportar Imagem</button>
+      </div>
     </div>
     <div id="evo-diagnostico" style="display:none;margin-bottom:16px"></div>
 
@@ -5980,6 +5984,308 @@ function renderDiagnostico() {
 
   html += '</div></div>';
   el.innerHTML = html;
+}
+
+
+// ═══════════════════════════════════════════════════════
+// EXPORTAR EVOLUÇÃO — EXCEL + IMAGEM
+// ═══════════════════════════════════════════════════════
+
+function exportarEvolucaoImagem() {
+  // Exportar os dois gráficos como imagem PNG lado a lado num canvas
+  const c1 = document.getElementById('chart-custo');
+  const c2 = document.getElementById('chart-pessoas');
+  if (!c1 || !c2) { toast('Gere o gráfico primeiro.', 'warn'); return; }
+
+  const titulo1 = document.getElementById('evo-title-custo')?.textContent || 'Evolução de Custos';
+  const titulo2 = document.getElementById('evo-title-pessoas')?.textContent || 'Evolução de Pessoas';
+  const visao   = document.getElementById('evo-visao')?.value || 'empresa';
+  const empresa = document.getElementById('evo-empresa');
+  const empNome = empresa?.options[empresa.selectedIndex]?.text || 'Todas as Empresas';
+  const de      = document.getElementById('evo-de')?.value  || '';
+  const ate     = document.getElementById('evo-ate')?.value || '';
+  const mesesN  = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const fmtM    = m => { if(!m) return ''; const [y,mo]=m.split('-'); return (mesesN[(parseInt(mo)||1)-1]||'')+'/'+y; };
+  const periodo = de && ate ? fmtM(de)+' a '+fmtM(ate) : de ? 'a partir de '+fmtM(de) : ate ? 'até '+fmtM(ate) : 'todo período';
+
+  // Criar canvas combinado
+  const W = 1400, PAD = 40, HEADER = 100, GAP = 30;
+  const H_CHART = Math.max(c1.height, c2.height, 400);
+  const H_TOTAL = HEADER + H_CHART * 2 + GAP * 3 + PAD;
+
+  const canvas = document.createElement('canvas');
+  canvas.width  = W;
+  canvas.height = H_TOTAL;
+  const ctx = canvas.getContext('2d');
+
+  // Fundo branco
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, W, H_TOTAL);
+
+  // Cabeçalho
+  ctx.fillStyle = '#2C7A72';
+  ctx.fillRect(0, 0, W, HEADER);
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = 'bold 22px Segoe UI, Arial, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('Equilibrym — Evolução de Custos e Quadro de Pessoas', PAD, 38);
+
+  ctx.font = '14px Segoe UI, Arial, sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillText(`${empNome}  ·  ${periodo}  ·  ${visao === 'depto' ? 'Por Departamento' : 'Por Unidade'}  ·  Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, PAD, 68);
+
+  // Linha separadora
+  ctx.fillStyle = '#F0F0F0';
+  ctx.fillRect(0, HEADER, W, 2);
+
+  // Título gráfico 1
+  ctx.fillStyle = '#2D3748';
+  ctx.font = 'bold 15px Segoe UI, Arial, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(titulo1, PAD, HEADER + GAP + 18);
+
+  // Gráfico 1
+  const y1 = HEADER + GAP + 28;
+  ctx.drawImage(c1, PAD, y1, W - PAD*2, H_CHART);
+
+  // Linha divisória
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(PAD, y1 + H_CHART + GAP/2);
+  ctx.lineTo(W - PAD, y1 + H_CHART + GAP/2);
+  ctx.stroke();
+
+  // Título gráfico 2
+  ctx.fillStyle = '#2D3748';
+  ctx.font = 'bold 15px Segoe UI, Arial, sans-serif';
+  ctx.fillText(titulo2, PAD, y1 + H_CHART + GAP + 18);
+
+  // Gráfico 2
+  const y2 = y1 + H_CHART + GAP + 28;
+  ctx.drawImage(c2, PAD, y2, W - PAD*2, H_CHART);
+
+  // Rodapé
+  ctx.fillStyle = '#718096';
+  ctx.font = '11px Segoe UI, Arial, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('Equilibrym RH — Sistema de Gestão de Folha de Pagamento', W - PAD, H_TOTAL - 14);
+
+  // Download
+  const link = document.createElement('a');
+  const hoje = new Date().toISOString().slice(0,10);
+  link.download = `Evolucao_Custos_${hoje}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+
+  toast('✅ Imagem exportada!');
+}
+
+function exportarEvolucaoPPT() {
+  // Exportar como Excel com duas abas: dados de custo e dados de pessoas
+  // Reutiliza os dados já calculados na tela
+  const de      = document.getElementById('evo-de')?.value    || '';
+  const ate     = document.getElementById('evo-ate')?.value   || '';
+  const visao   = document.getElementById('evo-visao')?.value || 'empresa';
+  const empId   = document.getElementById('evo-empresa')?.value || '';
+  const depto   = document.getElementById('evo-depto')?.value  || '';
+  const empresa = DB.empresas.find(e => e.id === empId);
+  const empNome = empresa?.razao || 'Todas as Empresas';
+  const mesesN  = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const hoje    = new Date().toLocaleDateString('pt-BR');
+
+  const fmtM = m => { if(!m) return ''; const [y,mo]=m.split('-'); return (mesesN[(parseInt(mo)||1)-1]||'')+'/'+y; };
+  const periodo = de && ate ? fmtM(de)+' a '+fmtM(ate) : de||ate ? fmtM(de)||fmtM(ate) : 'todo período';
+
+  // Recalcular dados (mesmo cálculo do renderEvolucao)
+  const parseBRX = v => {
+    if (!v && v !== 0) return 0;
+    const s = String(v).trim();
+    if (!s || s === '0') return 0;
+    if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
+    return parseFloat(s) || 0;
+  };
+
+  const folhasFilt = (DB.folhas||[]).filter(f => {
+    if (empId && f.empresaId !== empId) return false;
+    if (de  && (f.competencia||'') < de)  return false;
+    if (ate && (f.competencia||'') > ate) return false;
+    return true;
+  }).sort((a,b)=>(a.competencia||'').localeCompare(b.competencia||''));
+
+  if (!folhasFilt.length) { toast('Nenhuma folha no período.','warn'); return; }
+
+  const mesesSet = new Set();
+  folhasFilt.forEach(f => mesesSet.add(f.competencia));
+  const meses = [...mesesSet].sort();
+  const mesesLabels = meses.map(m => { const [y,mo]=m.split('-'); return (mesesN[(parseInt(mo)||1)-1]||'')+'/'+y; });
+
+  const porDepto = visao === 'depto';
+  let grupos = {}; // id -> nome
+
+  if (!porDepto) {
+    folhasFilt.forEach(f => {
+      if (!grupos[f.empresaId]) {
+        const r = f.empresaNome||f.empresaId||'';
+        const p = r.replace(/LTDA|S\.A\.|EIRELI|ME|EPP/gi,'').trim().split(/\s+/).filter(x=>x.length>2);
+        grupos[f.empresaId] = p.slice(0,2).join(' ')||r.substring(0,20);
+      }
+    });
+  } else {
+    const cadMap2 = {};
+    DB.funcionarios.forEach(f => {
+      if (!f.departamento) return;
+      const k = (f.cpf||'').replace(/\D/g,'');
+      if (k) cadMap2[k] = f.departamento;
+      cadMap2['n:'+normalize(f.nome)] = f.departamento;
+    });
+    folhasFilt.forEach(f => {
+      (f.funcionarios||[]).forEach(fn => {
+        const k = (fn.cpf||'').replace(/\D/g,'') || ('n:'+normalize(fn.nome));
+        const dep = cadMap2[k] || fn.departamento || '';
+        if (dep && (!depto || dep===depto)) grupos[dep] = dep;
+      });
+    });
+  }
+
+  const ids = Object.keys(grupos);
+  // acum: id|mes -> Map<chave, custo>
+  const cadMapX = {};
+  DB.funcionarios.forEach(f => {
+    const sal = parseBRX(f.salario);
+    const dep = f.departamento||'';
+    const k = (f.cpf||'').replace(/\D/g,'');
+    if (k) cadMapX[k] = {dep,sal};
+    cadMapX['n:'+normalize(f.nome)] = {dep,sal};
+  });
+
+  const acumX = {};
+  folhasFilt.forEach(f => {
+    const comp = f.competencia;
+    (f.funcionarios||[]).forEach(fn => {
+      const cpfK = (fn.cpf||'').replace(/\D/g,'');
+      const nK   = 'n:'+normalize(fn.nome);
+      const chave = cpfK || nK;
+      const cad  = cadMapX[cpfK]||cadMapX[nK]||{};
+      const grpId = porDepto ? (cad.dep||fn.departamento||'') : f.empresaId;
+      if (!grpId) return;
+      if (!grupos[grpId]) return;
+      if (porDepto && depto && grpId!==depto) return;
+
+      const key = grpId+'|'+comp;
+      if (!acumX[key]) acumX[key] = new Map();
+      if (!acumX[key].has(chave)) {
+        const prov = parseBRX(fn.proventos);
+        const salF = parseBRX(fn.salario);
+        const salC = cad.sal||0;
+        acumX[key].set(chave, prov>0?prov:(salF>0?salF:salC));
+      }
+    });
+  });
+
+  const dadosX = {};
+  ids.forEach(id => { dadosX[id]={}; meses.forEach(m => { dadosX[id][m]={custo:0,pessoas:0}; }); });
+  Object.entries(acumX).forEach(([key,map]) => {
+    const sep=key.lastIndexOf('|');
+    const id=key.slice(0,sep), comp=key.slice(sep+1);
+    if (!dadosX[id]||!dadosX[id][comp]) return;
+    dadosX[id][comp].custo   = [...map.values()].reduce((s,v)=>s+v,0);
+    dadosX[id][comp].pessoas = map.size;
+  });
+
+  // ── Estilos Excel ───────────────────────────────────────
+  const C = { T:'2C7A72', S:'4A5A72', W:'FFFFFF', X:'F4FAFA', G:'1A4A45', B:'2D3748' };
+  const brd = () => ({top:{style:'thin',color:{rgb:'CBD5E0'}},bottom:{style:'thin',color:{rgb:'CBD5E0'}},left:{style:'thin',color:{rgb:'CBD5E0'}},right:{style:'thin',color:{rgb:'CBD5E0'}}});
+  const sty = (bg,fg,bold,sz,align,wrap) => ({font:{bold:!!bold,color:{rgb:fg||C.W},sz:sz||9,name:'Calibri'},fill:{fgColor:{rgb:bg||C.T},patternType:'solid'},alignment:{horizontal:align||'center',vertical:'center',wrapText:!!wrap},border:brd()});
+
+  const buildEvoSheet = (tipo, sheetName, isCusto) => {
+    const rows=[], metas=[];
+    const R=(d,m)=>{rows.push(d);metas.push(m);};
+
+    const tit = isCusto ? '💰 Evolução do Custo por ' : '👥 Evolução do Quadro de Pessoas por ';
+    const suf = porDepto ? 'Departamento' : 'Unidade';
+
+    R([`EQUILIBRYM — ${tit}${suf}`],'title');
+    R([`Empresa: ${empNome}  |  Período: ${periodo}  |  Gerado em: ${hoje}`],'sub');
+    R([],'space');
+
+    // Cabeçalhos: Grupo | Mês1 | Mês2 | ... | Total
+    R([porDepto?'DEPARTAMENTO':'UNIDADE', ...mesesLabels, 'TOTAL'],'hdr');
+
+    let gtotal = 0;
+    const totMes = {};
+    meses.forEach(m=>{totMes[m]=0;});
+
+    ids.forEach((id,ri) => {
+      const nome = grupos[id];
+      let total = 0;
+      const row = [nome];
+      meses.forEach(m => {
+        const v = dadosX[id][m][tipo] || 0;
+        row.push(v||null);
+        total += v;
+        totMes[m] += v;
+      });
+      row.push(total||null);
+      gtotal += total;
+      R(row, ri%2===0?'even':'odd');
+    });
+
+    R([],'space');
+    const totRow = ['TOTAL GERAL'];
+    meses.forEach(m => totRow.push(totMes[m]||null));
+    totRow.push(gtotal||null);
+    R(totRow,'total');
+
+    const ncols = 2 + meses.length;
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{wch:24},...meses.map(()=>({wch:13})),{wch:14}];
+    ws['!rows'] = rows.map((_,i)=>{
+      const m=metas[i];
+      return m==='title'?{hpt:28}:m==='sub'?{hpt:16}:m==='hdr'?{hpt:22}:m==='total'?{hpt:20}:m==='space'?{hpt:5}:{hpt:16};
+    });
+    ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:ncols-1}},{s:{r:1,c:0},e:{r:1,c:ncols-1}}];
+    rows.forEach((_,ri)=>{
+      if (metas[ri]==='total') ws['!merges'].push({s:{r:ri,c:0},e:{r:ri,c:0}});
+    });
+
+    rows.forEach((row,ri)=>{
+      const m=metas[ri]; if(m==='space') return;
+      row.forEach((_,ci)=>{
+        const addr=XLSX.utils.encode_cell({r:ri,c:ci});
+        if(!ws[addr]) ws[addr]={t:'s',v:''};
+        const cell=ws[addr]; const val=cell.v;
+        const isNum=typeof val==='number';
+        const isTotal=ci===ncols-1;
+
+        if(m==='title')      cell.s=sty(C.T,C.W,true,14,'left');
+        else if(m==='sub')   cell.s=sty('E8F5F4',C.T,false,9,'left');
+        else if(m==='hdr')   cell.s=sty(C.S,C.W,true,9,'center',true);
+        else if(m==='total') cell.s=sty(C.G,C.W,true,10,isNum?'right':'left');
+        else {
+          const even=m==='even';
+          const bg=even?(isTotal?'D4EDE9':C.X):(isTotal?'E8F5F4':'FFFFFF');
+          cell.s=sty(bg,isTotal?C.G:C.B,isTotal||ci===0,9,ci===0?'left':'right');
+        }
+        // Formatos numéricos
+        if(isNum&&val) {
+          if(isCusto)    cell.s.numFmt='R$ #,##0.00';
+          else           cell.s.numFmt='#,##0';
+        }
+      });
+    });
+
+    return fixCellTypes(ws);
+  };
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, buildEvoSheet('custo',  'Custo',   true),  '💰 Custo por '+( porDepto?'Depto':'Unidade'));
+  XLSX.utils.book_append_sheet(wb, buildEvoSheet('pessoas','Pessoas', false), '👥 Pessoas por '+(porDepto?'Depto':'Unidade'));
+
+  const fname = 'Evolucao_'+(porDepto?'Departamentos':'Unidades')+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
+  XLSX.writeFile(wb, fname);
+  toast('✅ Excel exportado!');
 }
 
 
