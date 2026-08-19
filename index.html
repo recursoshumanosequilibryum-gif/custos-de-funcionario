@@ -624,16 +624,27 @@
     <div class="card" style="margin-bottom:18px">
       <div class="card-body" style="padding:14px 18px">
         <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
-          <div class="fg"><label>Ano</label>
-            <select id="evo-ano" onchange="renderEvolucao()">
-              <option>2026</option><option>2025</option><option>2024</option>
+          <div class="fg"><label>Visão</label>
+            <select id="evo-visao" onchange="updateEvoDeptos();renderEvolucao()" style="width:160px">
+              <option value="empresa">Por Empresa/Unidade</option>
+              <option value="depto">Por Departamento</option>
+            </select>
+          </div>
+          <div class="fg"><label>Empresa</label>
+            <select id="evo-empresa" onchange="updateEvoDeptos();renderEvolucao()" style="width:200px">
+              <option value="">Todas</option>
+            </select>
+          </div>
+          <div class="fg" id="evo-depto-box" style="display:none"><label>Departamento</label>
+            <select id="evo-depto" onchange="renderEvolucao()" style="width:180px">
+              <option value="">Todos</option>
             </select>
           </div>
           <div class="fg"><label>De</label>
-            <input type="month" id="evo-de" onchange="renderEvolucao()" style="width:150px">
+            <input type="month" id="evo-de" onchange="renderEvolucao()" style="width:140px">
           </div>
           <div class="fg"><label>Até</label>
-            <input type="month" id="evo-ate" onchange="renderEvolucao()" style="width:150px">
+            <input type="month" id="evo-ate" onchange="renderEvolucao()" style="width:140px">
           </div>
           <button class="btn btn-primary btn-sm" onclick="renderEvolucao()">🔍 Atualizar</button>
         </div>
@@ -643,7 +654,7 @@
     <!-- Gráfico Custo por Unidade -->
     <div class="card" style="margin-bottom:18px">
       <div class="card-header">
-        <h2>💰 Evolução do Custo Financeiro por Unidade</h2>
+        <h2 id="evo-title-custo">💰 Evolução do Custo Financeiro por Unidade</h2>
         <span style="font-size:.78rem;color:var(--muted)">Proventos totais mês a mês</span>
       </div>
       <div class="card-body">
@@ -654,7 +665,7 @@
     <!-- Gráfico Headcount por Unidade -->
     <div class="card" style="margin-bottom:18px">
       <div class="card-header">
-        <h2>👥 Evolução do Quadro de Pessoas por Unidade</h2>
+        <h2 id="evo-title-pessoas">👥 Evolução do Quadro de Pessoas por Unidade</h2>
         <span style="font-size:.78rem;color:var(--muted)">Quantidade de funcionários mês a mês</span>
       </div>
       <div class="card-body">
@@ -5084,126 +5095,189 @@ const EVO_COLORS = [
 let _chartCusto   = null;
 let _chartPessoas = null;
 
+function updateEvoDeptos() {
+  const visao  = document.getElementById('evo-visao')?.value || 'empresa';
+  const empId  = document.getElementById('evo-empresa')?.value || '';
+  const box    = document.getElementById('evo-depto-box');
+
+  // Mostrar/ocultar filtro de depto
+  if (box) box.style.display = visao === 'depto' ? '' : 'none';
+
+  // Popular deptos das folhas da empresa selecionada
+  const deptosSet = new Set();
+  (DB.folhas||[]).forEach(f => {
+    if (empId && f.empresaId !== empId) return;
+    (f.funcionarios||[]).forEach(fn => {
+      if (fn.departamento) deptosSet.add(fn.departamento);
+    });
+  });
+  const depEl = document.getElementById('evo-depto');
+  if (depEl) {
+    depEl.innerHTML = '<option value="">Todos</option>' +
+      [...deptosSet].sort().map(d => `<option value="${d}">${d}</option>`).join('');
+  }
+}
+
 function initEvolucao() {
-  // Ano padrão = ano atual
-  const anoEl = document.getElementById('evo-ano');
-  if (anoEl) anoEl.value = new Date().getFullYear().toString();
+  // Popular select de empresa
+  const empEl = document.getElementById('evo-empresa');
+  if (empEl) {
+    empEl.innerHTML = '<option value="">Todas</option>' +
+      DB.empresas.map(e => `<option value="${e.id}">${e.razao}</option>`).join('');
+  }
 
   // Período padrão = ano todo
   const ano = new Date().getFullYear();
-  const deEl = document.getElementById('evo-de');
+  const deEl  = document.getElementById('evo-de');
   const ateEl = document.getElementById('evo-ate');
   if (deEl  && !deEl.value)  deEl.value  = ano + '-01';
   if (ateEl && !ateEl.value) ateEl.value = ano + '-12';
 
-  // Popular ano baseado nas folhas disponíveis
-  const anos = [...new Set((DB.folhas||[]).map(f=>(f.competencia||'').slice(0,4)).filter(Boolean))].sort().reverse();
-  if (anos.length) {
-    const allAnos = [...new Set([...anos, '2026','2025','2024'])].sort().reverse();
-    if (anoEl) {
-      const curAno = anoEl.value;
-      anoEl.innerHTML = allAnos.map(a=>`<option value="${a}"${a===curAno?' selected':''}>${a}</option>`).join('');
-    }
-  }
-
+  updateEvoDeptos();
   renderEvolucao();
 }
 
 function renderEvolucao() {
-  const de  = document.getElementById('evo-de')?.value  || '';
-  const ate = document.getElementById('evo-ate')?.value || '';
+  const de     = document.getElementById('evo-de')?.value     || '';
+  const ate    = document.getElementById('evo-ate')?.value    || '';
+  const visao  = document.getElementById('evo-visao')?.value  || 'empresa';
+  const empId  = document.getElementById('evo-empresa')?.value || '';
+  const depto  = document.getElementById('evo-depto')?.value  || '';
 
-  // Filtrar folhas no período
+  const porDepto = visao === 'depto';
+
+  // Atualizar títulos
+  const titleSufixo = porDepto ? 'por Departamento' : 'por Unidade';
+  const tCC = document.getElementById('evo-title-custo');
+  const tCP = document.getElementById('evo-title-pessoas');
+  const tTC = document.getElementById('evo-tab-title-custo');
+  const tTP = document.getElementById('evo-tab-title-pessoas');
+  if (tCC) tCC.textContent = '💰 Evolução do Custo Financeiro ' + titleSufixo;
+  if (tCP) tCP.textContent = '👥 Evolução do Quadro de Pessoas ' + titleSufixo;
+  if (tTC) tTC.textContent = '💰 Custo ' + titleSufixo + ' (R$)';
+  if (tTP) tTP.textContent = '👥 Headcount ' + titleSufixo;
+
+  // Filtrar folhas
   const folhasFilt = (DB.folhas||[]).filter(f => {
     const c = f.competencia || '';
+    if (empId && f.empresaId !== empId) return false;
     if (de  && c < de)  return false;
     if (ate && c > ate) return false;
     return true;
   }).sort((a,b) => (a.competencia||'').localeCompare(b.competencia||''));
 
-  if (!folhasFilt.length) {
+  const empty = msg => {
     document.getElementById('evo-tabela-custo').innerHTML =
-      '<p style="padding:20px;text-align:center;color:var(--muted)">Nenhuma folha encontrada no período. Importe PDFs mensais primeiro.</p>';
+      `<p style="padding:20px;text-align:center;color:var(--muted)">${msg}</p>`;
     document.getElementById('evo-tabela-pessoas').innerHTML = '';
-    renderLineChart('chart-custo', [], [], [], 'Custo (R$)');
-    renderLineChart('chart-pessoas', [], [], [], 'Funcionários');
+    if (_chartCusto)   { _chartCusto.destroy();   _chartCusto   = null; }
+    if (_chartPessoas) { _chartPessoas.destroy(); _chartPessoas = null; }
+  };
+
+  if (!folhasFilt.length) {
+    empty('Nenhuma folha encontrada no período. Importe PDFs mensais primeiro.');
     return;
   }
 
-  // Coletar todos os meses e empresas/unidades
-  const mesesSet = new Set();
-  const empresasMap = {}; // empresaId -> nome curto
-
-  folhasFilt.forEach(f => {
-    mesesSet.add(f.competencia);
-    if (f.empresaId && !empresasMap[f.empresaId]) {
-      // Nome curto: primeira palavra significativa
-      const razao = f.empresaNome || f.empresaId;
-      const nomesCurtos = razao.replace(/LTDA|S\.A\.|EIRELI|ME|EPP/gi,'').trim();
-      const partes = nomesCurtos.split(/\s+/).filter(p => p.length > 2);
-      empresasMap[f.empresaId] = partes.slice(0,2).join(' ') || razao.substring(0,20);
-    }
-  });
-
-  const meses = [...mesesSet].sort();
-  const empresaIds = Object.keys(empresasMap);
-
-  // Formatar labels dos meses
   const mesesNomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const mesesSet = new Set();
+  folhasFilt.forEach(f => mesesSet.add(f.competencia));
+  const meses = [...mesesSet].sort();
   const mesesLabels = meses.map(m => {
     const [y,mo] = m.split('-');
     return (mesesNomes[(parseInt(mo)||1)-1]||'') + '/' + y;
   });
 
-  // Consolidar dados: [empresaId][mes] = {custo, pessoas}
-  const dados = {};
-  empresaIds.forEach(eid => {
-    dados[eid] = {};
-    meses.forEach(m => { dados[eid][m] = { custo:0, pessoas:0 }; });
+  // ── VISÃO POR EMPRESA ──────────────────────────────────
+  if (!porDepto) {
+    const empresasMap = {};
+    folhasFilt.forEach(f => {
+      if (f.empresaId && !empresasMap[f.empresaId]) {
+        const razao = f.empresaNome || f.empresaId;
+        const partes = razao.replace(/LTDA|S\.A\.|EIRELI|ME|EPP/gi,'').trim().split(/\s+/).filter(p=>p.length>2);
+        empresasMap[f.empresaId] = partes.slice(0,2).join(' ') || razao.substring(0,20);
+      }
+    });
+    const empresaIds = Object.keys(empresasMap);
+    const dados = {};
+    empresaIds.forEach(eid => {
+      dados[eid] = {};
+      meses.forEach(m => { dados[eid][m] = { custo:0, pessoas:0 }; });
+    });
+    folhasFilt.forEach(f => {
+      const eid = f.empresaId; const comp = f.competencia;
+      if (!eid || !comp || !dados[eid]) return;
+      const funcs = f.funcionarios || [];
+      dados[eid][comp].pessoas = funcs.length;
+      dados[eid][comp].custo = funcs.reduce((s,fn) => s+(parseFloat(fn.proventos)||parseFloat(fn.salario)||0), 0);
+    });
+
+    const mkDatasets = tipo => empresaIds.map((eid,i) => ({
+      label: empresasMap[eid],
+      data:  meses.map(m => dados[eid][m][tipo] || null),
+      borderColor: EVO_COLORS[i%EVO_COLORS.length].line,
+      backgroundColor: EVO_COLORS[i%EVO_COLORS.length].fill,
+      borderWidth:2.5, pointRadius:5, pointHoverRadius:7, fill:true, tension:0.35,
+    }));
+
+    renderLineChart('chart-custo',   mesesLabels, mkDatasets('custo'),   dados, 'custo');
+    renderLineChart('chart-pessoas', mesesLabels, mkDatasets('pessoas'), dados, 'pessoas');
+    buildEvoTabela('evo-tabela-custo',   meses, mesesLabels, empresaIds, empresasMap, dados, 'custo');
+    buildEvoTabela('evo-tabela-pessoas', meses, mesesLabels, empresaIds, empresasMap, dados, 'pessoas');
+    return;
+  }
+
+  // ── VISÃO POR DEPARTAMENTO ─────────────────────────────
+  const deptosSet = new Set();
+  folhasFilt.forEach(f => {
+    (f.funcionarios||[]).forEach(fn => {
+      if (!depto || fn.departamento === depto) {
+        if (fn.departamento) deptosSet.add(fn.departamento);
+      }
+    });
+  });
+
+  if (!deptosSet.size) {
+    empty('Nenhum departamento encontrado. Verifique se as folhas foram importadas.');
+    return;
+  }
+
+  const deptos = [...deptosSet].sort();
+  // Usar nomes curtos para departamentos longos
+  const deptosMap = {};
+  deptos.forEach(d => {
+    deptosMap[d] = d.length > 20 ? d.substring(0,20) + '...' : d;
+  });
+
+  const dados2 = {};
+  deptos.forEach(d => {
+    dados2[d] = {};
+    meses.forEach(m => { dados2[d][m] = { custo:0, pessoas:0 }; });
   });
 
   folhasFilt.forEach(f => {
-    const eid = f.empresaId;
     const comp = f.competencia;
-    if (!eid || !comp || !dados[eid]) return;
-    const funcs = f.funcionarios || [];
-    dados[eid][comp].pessoas = funcs.length;
-    dados[eid][comp].custo = funcs.reduce((s, fn) => {
-      return s + (parseFloat(fn.proventos)||parseFloat(fn.salario)||0);
-    }, 0);
+    (f.funcionarios||[]).forEach(fn => {
+      const dep = fn.departamento;
+      if (!dep || !dados2[dep]) return;
+      if (!dados2[dep][comp]) dados2[dep][comp] = { custo:0, pessoas:0 };
+      dados2[dep][comp].pessoas += 1;
+      dados2[dep][comp].custo   += (parseFloat(fn.proventos)||parseFloat(fn.salario)||0);
+    });
   });
 
-  // Montar datasets para Chart.js
-  const datasetsCusto   = empresaIds.map((eid, i) => ({
-    label: empresasMap[eid],
-    data:  meses.map(m => dados[eid][m].custo || null),
-    borderColor:     EVO_COLORS[i % EVO_COLORS.length].line,
-    backgroundColor: EVO_COLORS[i % EVO_COLORS.length].fill,
-    borderWidth: 2.5,
-    pointRadius: 5,
-    pointHoverRadius: 7,
-    fill: true,
-    tension: 0.35,
+  const mkDatasets2 = tipo => deptos.map((dep,i) => ({
+    label: deptosMap[dep],
+    data:  meses.map(m => dados2[dep][m]?.[tipo] || null),
+    borderColor: EVO_COLORS[i%EVO_COLORS.length].line,
+    backgroundColor: EVO_COLORS[i%EVO_COLORS.length].fill,
+    borderWidth:2.5, pointRadius:5, pointHoverRadius:7, fill:true, tension:0.35,
   }));
 
-  const datasetsPessoas = empresaIds.map((eid, i) => ({
-    label: empresasMap[eid],
-    data:  meses.map(m => dados[eid][m].pessoas || null),
-    borderColor:     EVO_COLORS[i % EVO_COLORS.length].line,
-    backgroundColor: EVO_COLORS[i % EVO_COLORS.length].fill,
-    borderWidth: 2.5,
-    pointRadius: 5,
-    pointHoverRadius: 7,
-    fill: true,
-    tension: 0.35,
-  }));
-
-  renderLineChart('chart-custo',   mesesLabels, datasetsCusto,   dados, 'custo');
-  renderLineChart('chart-pessoas', mesesLabels, datasetsPessoas, dados, 'pessoas');
-
-  // Tabelas
-  buildEvoTabela('evo-tabela-custo',   meses, mesesLabels, empresaIds, empresasMap, dados, 'custo');
-  buildEvoTabela('evo-tabela-pessoas', meses, mesesLabels, empresaIds, empresasMap, dados, 'pessoas');
+  renderLineChart('chart-custo',   mesesLabels, mkDatasets2('custo'),   dados2, 'custo');
+  renderLineChart('chart-pessoas', mesesLabels, mkDatasets2('pessoas'), dados2, 'pessoas');
+  buildEvoTabela('evo-tabela-custo',   meses, mesesLabels, deptos, deptosMap, dados2, 'custo');
+  buildEvoTabela('evo-tabela-pessoas', meses, mesesLabels, deptos, deptosMap, dados2, 'pessoas');
 }
 
 function renderLineChart(canvasId, labels, datasets, dados, tipo) {
