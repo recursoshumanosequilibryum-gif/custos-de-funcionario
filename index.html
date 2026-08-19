@@ -5255,12 +5255,24 @@ function renderEvolucao() {
       dados[eid] = {};
       meses.forEach(m => { dados[eid][m] = { custo:0, pessoas:0 }; });
     });
+    // Função para parsear valor BR corretamente
+    const parseBRV = v => {
+      if (!v && v !== 0) return 0;
+      const s = String(v).trim();
+      if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
+      return parseFloat(s) || 0;
+    };
+
     folhasFilt.forEach(f => {
       const eid = f.empresaId; const comp = f.competencia;
       if (!eid || !comp || !dados[eid]) return;
       const funcs = f.funcionarios || [];
       dados[eid][comp].pessoas = funcs.length;
-      dados[eid][comp].custo = funcs.reduce((s,fn) => s+(parseFloat(fn.proventos)||parseFloat(fn.salario)||0), 0);
+      dados[eid][comp].custo = funcs.reduce((s,fn) => {
+        const prov = parseBRV(fn.proventos);
+        const sal  = parseBRV(fn.salario);
+        return s + (prov > 0 ? prov : sal);
+      }, 0);
     });
 
     const mkDatasets = tipo => empresaIds.map((eid,i) => ({
@@ -5279,11 +5291,25 @@ function renderEvolucao() {
   }
 
   // ── VISÃO POR DEPARTAMENTO ─────────────────────────────
+  // Construir mapa de departamento atualizado do cadastro
+  const mapDepCPF  = {};
+  const mapDepNome = {};
+  DB.funcionarios.forEach(f => {
+    if (!f.departamento) return;
+    if (f.cpf)  mapDepCPF[f.cpf.replace(/\D/g,'')] = f.departamento;
+    mapDepNome[normalize(f.nome)] = f.departamento;
+  });
+
+  // Coletar deptos usando o cadastro atualizado
   const deptosSet = new Set();
   folhasFilt.forEach(f => {
     (f.funcionarios||[]).forEach(fn => {
-      if (!depto || fn.departamento === depto) {
-        if (fn.departamento) deptosSet.add(fn.departamento);
+      const cpfKey  = (fn.cpf||'').replace(/\D/g,'');
+      const nomeKey = normalize(fn.nome);
+      // Prioridade: cadastro atualizado > departamento da folha
+      const dep = mapDepCPF[cpfKey] || mapDepNome[nomeKey] || fn.departamento || '';
+      if (dep) {
+        if (!depto || dep === depto) deptosSet.add(dep);
       }
     });
   });
@@ -5306,14 +5332,47 @@ function renderEvolucao() {
     meses.forEach(m => { dados2[d][m] = { custo:0, pessoas:0 }; });
   });
 
+  // Mapa rápido do cadastro: CPF/nome -> departamento atualizado
+  const mapCadCPF  = {};
+  const mapCadNome = {};
+  DB.funcionarios.forEach(f => {
+    if (!f.departamento) return;
+    if (f.cpf)  mapCadCPF[f.cpf.replace(/\D/g,'')] = f.departamento;
+    mapCadNome[normalize(f.nome)] = f.departamento;
+  });
+
+  // Função para parsear valor BR corretamente ("8.475,55" -> 8475.55)
+  const parseBRVal = v => {
+    if (!v && v !== 0) return 0;
+    const s = String(v).trim();
+    // Formato BR: 8.475,55
+    if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
+    // Já em decimal
+    return parseFloat(s) || 0;
+  };
+
   folhasFilt.forEach(f => {
     const comp = f.competencia;
     (f.funcionarios||[]).forEach(fn => {
-      const dep = fn.departamento;
-      if (!dep || !dados2[dep]) return;
+      // Buscar departamento atualizado do cadastro (após sincronização)
+      const cpfKey  = (fn.cpf||'').replace(/\D/g,'');
+      const nomeKey = normalize(fn.nome);
+      const dep = mapCadCPF[cpfKey] || mapCadNome[nomeKey] || fn.departamento || '';
+
+      if (!dep) return; // sem departamento = ignora
+      if (!dados2[dep]) return; // não está nos deptos filtrados = ignora
+
+      // Se filtro de depto específico aplicado
+      if (depto && dep !== depto) return;
+
       if (!dados2[dep][comp]) dados2[dep][comp] = { custo:0, pessoas:0 };
       dados2[dep][comp].pessoas += 1;
-      dados2[dep][comp].custo   += (parseFloat(fn.proventos)||parseFloat(fn.salario)||0);
+
+      // Usar proventos da folha se disponível, senão salário
+      // Garantir parse correto de valores BR
+      const prov = parseBRVal(fn.proventos);
+      const sal  = parseBRVal(fn.salario);
+      dados2[dep][comp].custo += (prov > 0 ? prov : sal);
     });
   });
 
