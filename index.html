@@ -284,6 +284,7 @@
   <button onclick="showPage('empresas')">🏢 Empresas</button>
   <button onclick="showPage('departamentos')">🗂 Departamentos</button>
   <button onclick="showPage('funcionarios')">👥 Funcionários</button>
+  <button onclick="showPage('vincular-deptos')">🔗 Vincular Deptos</button>
   <button onclick="showPage('importar-pdf')">📄 Importar PDF Folha</button>
   <button onclick="showPage('importar-rubricas')">📊 Importar Rubricas</button>
   <button onclick="showPage('indicadores')">📈 Indicadores RH</button>
@@ -411,6 +412,51 @@
 </div>
 
 <!-- ════════════════ IMPORTAR PDF ════════════════ -->
+<div id="page-vincular-deptos" class="page">
+  <div style="padding:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div>
+        <h1 style="font-size:1.3rem;font-weight:800;color:var(--slate-dk)">🔗 Vincular Funcionários a Departamentos</h1>
+        <p style="font-size:.82rem;color:var(--muted);margin-top:4px">Corrija funcionários sem departamento ou com departamento errado</p>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-success btn-sm" onclick="vincularTodos()">✅ Salvar Todos</button>
+      </div>
+    </div>
+
+    <!-- Filtros -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-body" style="padding:12px 16px">
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+          <div class="fg"><label>Empresa</label>
+            <select id="vd-empresa" onchange="renderVincularDeptos()" style="width:220px">
+              <option value="">Todas</option>
+            </select>
+          </div>
+          <div class="fg"><label>Mostrar</label>
+            <select id="vd-filtro" onchange="renderVincularDeptos()">
+              <option value="sem-depto">Sem departamento</option>
+              <option value="todos">Todos os funcionários</option>
+              <option value="com-depto">Com departamento</option>
+            </select>
+          </div>
+          <div class="fg"><label>Buscar</label>
+            <input type="text" id="vd-busca" placeholder="Nome do funcionário..." oninput="renderVincularDeptos()" style="width:200px">
+          </div>
+          <span id="vd-count" style="font-size:.8rem;color:var(--muted);align-self:center"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lista -->
+    <div class="card">
+      <div class="card-body" style="padding:0">
+        <div id="vd-lista"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="page-importar-pdf" class="page">
   <div class="grid-2">
     <div>
@@ -1150,6 +1196,7 @@ function showPage(id) {
   if (id === 'importar-pdf') { populatePdfSelects(); renderFolhasHistorico(); }
   if (id === 'importar-rubricas') { populateRubricaSelects(); renderRubricasHistorico(); }
   if (id === 'indicadores') { initIndicadores(); }
+  if (id === 'vincular-deptos') { initVincularDeptos(); }
   if (id === 'evolucao') { initEvolucao(); }
   if (id === 'config') { loadConfigForm(); }
 }
@@ -5411,6 +5458,222 @@ function buildEvoTabela(containerId, meses, mesesLabels, empresaIds, empresasMap
 
   html += '</tbody></table>';
   el.innerHTML = html;
+}
+
+
+// ═══════════════════════════════════════════════════════
+// VINCULAR DEPARTAMENTOS
+// ═══════════════════════════════════════════════════════
+
+function initVincularDeptos() {
+  const empEl = document.getElementById('vd-empresa');
+  if (empEl) {
+    empEl.innerHTML = '<option value="">Todas</option>' +
+      DB.empresas.map(e => `<option value="${e.id}">${e.razao}</option>`).join('');
+  }
+  renderVincularDeptos();
+}
+
+function renderVincularDeptos() {
+  const empId  = document.getElementById('vd-empresa')?.value || '';
+  const filtro = document.getElementById('vd-filtro')?.value  || 'sem-depto';
+  const busca  = (document.getElementById('vd-busca')?.value  || '').toLowerCase();
+
+  let funcs = DB.funcionarios.filter(f => {
+    if (empId && f.empresaId !== empId) return false;
+    if (busca && !f.nome.toLowerCase().includes(busca)) return false;
+    if (filtro === 'sem-depto')  return !f.departamento || f.departamento.trim() === '';
+    if (filtro === 'com-depto')  return  f.departamento && f.departamento.trim() !== '';
+    return true;
+  });
+
+  // Ordenar por empresa e nome
+  funcs.sort((a,b) =>
+    (a.empresaNome||'').localeCompare(b.empresaNome||'') ||
+    (a.nome||'').localeCompare(b.nome||'')
+  );
+
+  const countEl = document.getElementById('vd-count');
+  if (countEl) countEl.textContent = funcs.length + ' funcionário(s)';
+
+  const lista = document.getElementById('vd-lista');
+  if (!lista) return;
+
+  if (!funcs.length) {
+    lista.innerHTML = `<div style="padding:48px;text-align:center;color:var(--muted)">
+      <div style="font-size:2.5rem;margin-bottom:12px">✅</div>
+      <p style="font-size:.9rem">${
+        filtro === 'sem-depto'
+          ? 'Todos os funcionários já estão vinculados a um departamento!'
+          : 'Nenhum funcionário encontrado.'
+      }</p>
+    </div>`;
+    return;
+  }
+
+  // Agrupar por empresa para facilitar
+  const byEmp = {};
+  funcs.forEach(f => {
+    const k = f.empresaId || 'sem-empresa';
+    if (!byEmp[k]) byEmp[k] = { nome: f.empresaNome || 'Sem empresa', funcs: [] };
+    byEmp[k].funcs.push(f);
+  });
+
+  let html = '';
+
+  Object.entries(byEmp).forEach(([eid, group]) => {
+    // Deptos disponíveis para esta empresa
+    const deptos = DB.departamentos
+      .filter(d => d.empresaId === eid)
+      .sort((a,b) => a.nome.localeCompare(b.nome));
+
+    const deptOpts = '<option value="">— Sem departamento —</option>' +
+      deptos.map(d => `<option value="${d.nome}">${d.nome}</option>`).join('');
+
+    html += `<div style="padding:10px 16px;background:var(--teal-lt);border-bottom:2px solid var(--teal-dk);font-weight:700;font-size:.85rem;color:var(--teal-dk)">
+      🏢 ${group.nome} — ${group.funcs.length} funcionário(s)
+    </div>`;
+
+    group.funcs.forEach((f, fi) => {
+      const even = fi % 2 === 0;
+      const bg = even ? 'var(--teal-xlt)' : '#fff';
+      const semDepto = !f.departamento || f.departamento.trim() === '';
+
+      html += `<div style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border);background:${bg}">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;color:var(--teal-dk);font-size:.88rem">${f.nome}</div>
+          <div style="font-size:.76rem;color:var(--muted);margin-top:2px">
+            ${f.cargo||'-'} · ${f.vinculo||'-'} · CPF: ${f.cpf||'-'}
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          ${semDepto
+            ? '<span style="font-size:.72rem;padding:2px 8px;background:var(--danger-lt);color:var(--danger);border-radius:12px;font-weight:700">Sem depto</span>'
+            : `<span style="font-size:.72rem;padding:2px 8px;background:var(--teal-lt);color:var(--teal-dk);border-radius:12px;font-weight:600">${f.departamento}</span>`
+          }
+          <select
+            id="vd-sel-${f.id}"
+            onchange="previewVinculo('${f.id}', this.value)"
+            style="padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;font-size:.83rem;min-width:180px"
+          >
+            ${deptOpts}
+          </select>
+          <button
+            class="btn btn-primary btn-xs"
+            onclick="salvarVinculo('${f.id}')"
+            style="white-space:nowrap"
+          >💾 Salvar</button>
+        </div>
+      </div>`;
+    });
+  });
+
+  lista.innerHTML = html;
+
+  // Pré-selecionar o departamento atual em cada select
+  funcs.forEach(f => {
+    const sel = document.getElementById('vd-sel-' + f.id);
+    if (sel && f.departamento) sel.value = f.departamento;
+  });
+}
+
+function previewVinculo(funcId, deptoNome) {
+  // Feedback visual imediato — não salva ainda
+  const btn = document.querySelector(`button[onclick="salvarVinculo('${funcId}')"]`);
+  if (btn) btn.style.background = 'var(--warn)';
+}
+
+function salvarVinculo(funcId) {
+  const sel = document.getElementById('vd-sel-' + funcId);
+  if (!sel) return;
+
+  const novoDepto = sel.value;
+  const idx = DB.funcionarios.findIndex(f => f.id === funcId);
+  if (idx < 0) return;
+
+  const funcNome = DB.funcionarios[idx].nome;
+  const empId    = DB.funcionarios[idx].empresaId;
+
+  // Atualizar no cadastro de funcionários
+  DB.funcionarios[idx] = { ...DB.funcionarios[idx], departamento: novoDepto };
+
+  // Atualizar também nas folhas importadas
+  let fCount = 0;
+  (DB.folhas || []).forEach(folha => {
+    if (folha.empresaId !== empId) return;
+    (folha.funcionarios || []).forEach(ff => {
+      if ((ff.cpf && ff.cpf === DB.funcionarios[idx].cpf) ||
+          normalize(ff.nome) === normalize(funcNome)) {
+        ff.departamento = novoDepto;
+        fCount++;
+      }
+    });
+  });
+
+  saveDB();
+
+  // Feedback visual
+  const btn = document.querySelector(`button[onclick="salvarVinculo('${funcId}')"]`);
+  if (btn) {
+    btn.textContent = '✅ Salvo';
+    btn.style.background = 'var(--success)';
+    setTimeout(() => {
+      btn.textContent = '💾 Salvar';
+      btn.style.background = '';
+    }, 1500);
+  }
+
+  // Atualizar chip de departamento
+  const row = sel.closest('div[style*="display:flex"]');
+  if (row) {
+    const chip = row.querySelector('span[style*="border-radius"]');
+    if (chip) {
+      if (novoDepto) {
+        chip.textContent = novoDepto;
+        chip.style.background = 'var(--teal-lt)';
+        chip.style.color = 'var(--teal-dk)';
+      } else {
+        chip.textContent = 'Sem depto';
+        chip.style.background = 'var(--danger-lt)';
+        chip.style.color = 'var(--danger)';
+      }
+    }
+  }
+
+  toast(`✅ ${funcNome} → ${novoDepto||'Sem departamento'} (atualizado em ${fCount} folha(s))`);
+}
+
+function vincularTodos() {
+  // Salvar todos os selects visíveis de uma vez
+  const sels = document.querySelectorAll('[id^="vd-sel-"]');
+  if (!sels.length) { toast('Nenhum funcionário para salvar', 'warn'); return; }
+
+  let count = 0;
+  sels.forEach(sel => {
+    const funcId = sel.id.replace('vd-sel-', '');
+    const novoDepto = sel.value;
+    const idx = DB.funcionarios.findIndex(f => f.id === funcId);
+    if (idx < 0) return;
+
+    const funcNome = DB.funcionarios[idx].nome;
+    const empId    = DB.funcionarios[idx].empresaId;
+    DB.funcionarios[idx] = { ...DB.funcionarios[idx], departamento: novoDepto };
+
+    (DB.folhas || []).forEach(folha => {
+      if (folha.empresaId !== empId) return;
+      (folha.funcionarios || []).forEach(ff => {
+        if ((ff.cpf && ff.cpf === DB.funcionarios[idx].cpf) ||
+            normalize(ff.nome) === normalize(funcNome)) {
+          ff.departamento = novoDepto;
+        }
+      });
+    });
+    count++;
+  });
+
+  saveDB();
+  toast(`✅ ${count} funcionário(s) atualizados!`);
+  setTimeout(() => renderVincularDeptos(), 300);
 }
 
 
