@@ -5303,57 +5303,7 @@ function renderEvolucao() {
   }
 
   // ── VISÃO POR DEPARTAMENTO ─────────────────────────────
-  // Construir mapa de departamento atualizado do cadastro
-  const mapDepCPF  = {};
-  const mapDepNome = {};
-  DB.funcionarios.forEach(f => {
-    if (!f.departamento) return;
-    if (f.cpf)  mapDepCPF[f.cpf.replace(/\D/g,'')] = f.departamento;
-    mapDepNome[normalize(f.nome)] = f.departamento;
-  });
-
-  // Coletar deptos usando o cadastro atualizado
-  const deptosSet = new Set();
-  folhasFilt.forEach(f => {
-    (f.funcionarios||[]).forEach(fn => {
-      const cpfKey  = (fn.cpf||'').replace(/\D/g,'');
-      const nomeKey = normalize(fn.nome);
-      // Prioridade: cadastro atualizado > departamento da folha
-      const dep = mapDepCPF[cpfKey] || mapDepNome[nomeKey] || fn.departamento || '';
-      if (dep) {
-        if (!depto || dep === depto) deptosSet.add(dep);
-      }
-    });
-  });
-
-  if (!deptosSet.size) {
-    empty('Nenhum departamento encontrado. Verifique se as folhas foram importadas.');
-    return;
-  }
-
-  const deptos = [...deptosSet].sort();
-  // Usar nomes curtos para departamentos longos
-  const deptosMap = {};
-  deptos.forEach(d => {
-    deptosMap[d] = d.length > 20 ? d.substring(0,20) + '...' : d;
-  });
-
-  const dados2 = {};
-  deptos.forEach(d => {
-    dados2[d] = {};
-    meses.forEach(m => { dados2[d][m] = { custo:0, pessoas:0 }; });
-  });
-
-  // Mapa rápido do cadastro: CPF/nome -> departamento atualizado
-  const mapCadCPF  = {};
-  const mapCadNome = {};
-  DB.funcionarios.forEach(f => {
-    if (!f.departamento) return;
-    if (f.cpf)  mapCadCPF[f.cpf.replace(/\D/g,'')] = f.departamento;
-    mapCadNome[normalize(f.nome)] = f.departamento;
-  });
-
-  // Parser de valor BR ("8.475,55" -> 8475.55, 8475.55 -> 8475.55)
+  // Função parser BR usada em todo o bloco
   const parseBRVal = v => {
     if (!v && v !== 0) return 0;
     const s = String(v).trim();
@@ -5362,51 +5312,85 @@ function renderEvolucao() {
     return parseFloat(s) || 0;
   };
 
-  // Mapa de salário do cadastro: CPF/nome -> salario (fallback confiável)
-  const mapSalCPF  = {};
-  const mapSalNome = {};
+  // Mapa único: CPF -> {depto, salario} e nome -> {depto, salario} do cadastro
+  const cadMap = {}; // chave (cpf sem mask ou 'n:'+nomeNorm) -> {depto, sal}
   DB.funcionarios.forEach(f => {
-    const sal = parseBRVal(f.salario);
-    if (!sal) return;
-    const cpfK = (f.cpf||'').replace(/\D/g,'');
-    if (cpfK) mapSalCPF[cpfK] = sal;
-    mapSalNome[normalize(f.nome)] = sal;
+    const sal   = parseBRVal(f.salario);
+    const dep   = f.departamento || '';
+    const cpfK  = (f.cpf||'').replace(/\D/g,'');
+    const nomeK = 'n:' + normalize(f.nome);
+    if (cpfK)  cadMap[cpfK]  = { dep, sal };
+    cadMap[nomeK] = { dep, sal };
   });
 
-  // Processar folhas — deduplicar por CPF/nome dentro do mesmo mês
-  // (evita contar Eliane 2x se ela aparecer em MATRIZ e LONGHI no mesmo mês)
+  const getChave = fn => (fn.cpf||'').replace(/\D/g,'') || ('n:' + normalize(fn.nome));
+  const getDep   = fn => { const c = cadMap[getChave(fn)]; return c?.dep || fn.departamento || ''; };
+  const getSal   = fn => { const c = cadMap[getChave(fn)]; return c?.sal || parseBRVal(fn.salario); };
+
+  // Coletar todos os deptos presentes nas folhas
+  const deptosSet = new Set();
   folhasFilt.forEach(f => {
-    const comp = f.competencia;
     (f.funcionarios||[]).forEach(fn => {
-      const cpfKey  = (fn.cpf||'').replace(/\D/g,'');
-      const nomeKey = normalize(fn.nome);
-      const dep = mapCadCPF[cpfKey] || mapCadNome[nomeKey] || fn.departamento || '';
-
-      if (!dep) return;
-      if (!dados2[dep]) return;
-      if (depto && dep !== depto) return;
-
-      if (!dados2[dep][comp]) dados2[dep][comp] = { custo:0, pessoas:0, vistos: new Set() };
-
-      // Chave única por funcionário no mês (CPF prioritário, senão nome)
-      const chave = cpfKey || nomeKey;
-      if (dados2[dep][comp].vistos.has(chave)) return; // já contou esse funcionário
-      dados2[dep][comp].vistos.add(chave);
-
-      dados2[dep][comp].pessoas += 1;
-
-      // CUSTO: proventos folha > salário folha > salário cadastro
-      const prov     = parseBRVal(fn.proventos);
-      const salFolha = parseBRVal(fn.salario);
-      const salCad   = mapSalCPF[cpfKey] || mapSalNome[nomeKey] || 0;
-      dados2[dep][comp].custo += prov > 0 ? prov : (salFolha > 0 ? salFolha : salCad);
+      const dep = getDep(fn);
+      if (dep && (!depto || dep === depto)) deptosSet.add(dep);
     });
+  });
+
+  if (!deptosSet.size) {
+    empty('Nenhum departamento encontrado. Vincule os funcionários aos departamentos primeiro.');
+    return;
+  }
+
+  const deptos = [...deptosSet].sort();
+  const deptosMap = {};
+  deptos.forEach(d => { deptosMap[d] = d.length > 22 ? d.substring(0,22)+'...' : d; });
+
+  // Estrutura: dados2[dep][mes] = {custo, pessoas}
+  // Usar Map para deduplicar por chave (CPF ou nome) dentro de cada dep+mes
+  // Estrutura interna: acum[dep+'|'+mes] = Map<chave, {prov, sal}>
+  const acum = {}; // dep|mes -> Map<chave, custo>
+
+  folhasFilt.forEach(f => {
+    const comp = f.competencia || '';
+    (f.funcionarios||[]).forEach(fn => {
+      const dep   = getDep(fn);
+      if (!dep) return;
+      if (!deptosMap[dep]) return;           // não está nos deptos coletados
+      if (depto && dep !== depto) return;    // filtro específico
+
+      const chave = getChave(fn);
+      const key   = dep + '|' + comp;
+      if (!acum[key]) acum[key] = new Map();
+
+      // Só registrar se ainda não viu este funcionário neste dep+mes
+      // (evita duplicação quando mesmo func aparece em duas folhas do mês)
+      if (!acum[key].has(chave)) {
+        const prov   = parseBRVal(fn.proventos);
+        const sal    = getSal(fn);
+        const custo  = prov > 0 ? prov : sal;
+        acum[key].set(chave, custo);
+      }
+    });
+  });
+
+  // Converter acum para dados2
+  const dados2 = {};
+  deptos.forEach(d => {
+    dados2[d] = {};
+    meses.forEach(m => { dados2[d][m] = { custo:0, pessoas:0 }; });
+  });
+
+  Object.entries(acum).forEach(([key, funcsMap]) => {
+    const [dep, comp] = key.split('|');
+    if (!dados2[dep] || !dados2[dep][comp]) return;
+    dados2[dep][comp].pessoas = funcsMap.size;
+    dados2[dep][comp].custo   = [...funcsMap.values()].reduce((s,v)=>s+v, 0);
   });
 
   const mkDatasets2 = tipo => deptos.map((dep,i) => ({
     label: deptosMap[dep],
     data:  meses.map(m => dados2[dep][m]?.[tipo] || null),
-    borderColor: EVO_COLORS[i%EVO_COLORS.length].line,
+    borderColor:     EVO_COLORS[i%EVO_COLORS.length].line,
     backgroundColor: EVO_COLORS[i%EVO_COLORS.length].fill,
     borderWidth:2.5, pointRadius:5, pointHoverRadius:7, fill:true, tension:0.35,
   }));
