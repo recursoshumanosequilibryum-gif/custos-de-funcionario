@@ -878,6 +878,14 @@
           <div class="sep"></div>
           <button class="btn btn-danger" onclick="resetAll()">🗑 Limpar Todos os Dados</button>
         </div>
+        <hr style="margin:14px 0">
+        <div style="font-size:.78rem;font-weight:700;color:var(--slate-dk);margin-bottom:8px">🔧 Manutenção de Dados</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-warn btn-sm" onclick="forcarLimpezaRubricas()">🧹 Limpar Rubricas Inválidas</button>
+          <button class="btn btn-secondary btn-sm" onclick="inspecionarFuncionario()">🔍 Inspecionar Funcionário</button>
+        </div>
+        <div id="inspecionar-result" style="margin-top:10px"></div>
+        </div>
       </div>
     </div>
     <div class="card">
@@ -6898,6 +6906,211 @@ function exportarEvolucaoPPT() {
   const fname = 'Evolucao_RH_'+(porDepto?'Departamentos':'Unidades')+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
   XLSX.writeFile(wb, fname);
   toast('✅ Excel exportado com ' + wb.SheetNames.length + ' abas!');
+}
+
+
+// ═══════════════════════════════════════════════════════
+// FERRAMENTAS DE MANUTENÇÃO
+// ═══════════════════════════════════════════════════════
+
+function forcarLimpezaRubricas() {
+  // Força a limpeza de rubricas contaminadas e mostra resultado
+  const FALTA_CODES = ['8870','8792','8794','8813','246','245'];
+  const SAL_CODES   = ['8781','8797','9180','9382','9380','8771','8772','250','203'];
+
+  const parseBRC = v => {
+    if (!v && v !== 0) return 0;
+    const s = String(v).trim();
+    if (!s || s === '0') return 0;
+    if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
+    return parseFloat(s) || 0;
+  };
+
+  let totalRemovidas = 0;
+  const relatorio = [];
+
+  (DB.folhas || []).forEach(folha => {
+    (folha.funcionarios || []).forEach(f => {
+      const rubs = f.rubricas_detalhe;
+      if (!rubs || !rubs.length) return;
+
+      const salMes = parseBRC(f.salario) || parseBRC(f.proventos) || 0;
+      const salDia = salMes > 0 ? salMes / 30 : 0;
+      const isDir  = (f.vinculo||'').toLowerCase().includes('diretor') ||
+                     (f.cargo||'').toLowerCase().includes('socio') ||
+                     (f.cargo||'').toLowerCase().includes('sócio');
+
+      const antes = rubs.length;
+      const faltasAntes = rubs.filter(r => FALTA_CODES.includes(r.code));
+
+      // Aplicar todas as regras de limpeza
+      f.rubricas_detalhe = rubs.filter(r => {
+        if (!FALTA_CODES.includes(r.code)) return true;
+        if (isDir) return false;
+        const qty = parseBRC(r.qty);
+        const val = parseBRC(r.val);
+        if (qty > 30) return false;
+        if (salMes > 0 && val > salMes * 0.95) return false;
+        if (salDia > 0 && qty > 0) {
+          const vpd = val / qty;
+          if (vpd < salDia * 0.75 || vpd > salDia * 1.10) return false;
+        }
+        return true;
+      });
+
+      // Sem rubrica de salário próprio = remover faltas
+      const temFalta = f.rubricas_detalhe.some(r => FALTA_CODES.includes(r.code));
+      const temSal   = f.rubricas_detalhe.some(r => SAL_CODES.includes(r.code));
+      if (temFalta && !temSal) {
+        f.rubricas_detalhe = f.rubricas_detalhe.filter(r => !FALTA_CODES.includes(r.code));
+      }
+
+      // Rubricas com qty absurda
+      f.rubricas_detalhe = f.rubricas_detalhe.filter(r => {
+        const qty = parseBRC(r.qty);
+        if ((r.code === '8781' || r.code === '8797') && qty > 60) return false;
+        return true;
+      });
+
+      const removidas = antes - f.rubricas_detalhe.length;
+      if (removidas > 0) {
+        totalRemovidas += removidas;
+        faltasAntes.forEach(r => {
+          const mantida = f.rubricas_detalhe.some(x => x.code === r.code);
+          if (!mantida) {
+            relatorio.push({
+              comp: folha.competencia||'', emp: folha.empresaNome||'',
+              nome: f.nome, codigo: r.code, desc: r.desc||'',
+              qty: r.qty, val: parseBRC(r.val), salDia: salDia.toFixed(2)
+            });
+          }
+        });
+      }
+    });
+  });
+
+  if (totalRemovidas > 0) {
+    saveDB();
+  }
+
+  // Mostrar resultado
+  const el = document.getElementById('inspecionar-result');
+  if (!el) { toast(totalRemovidas > 0 ? `✅ ${totalRemovidas} rubrica(s) inválida(s) removida(s)!` : '✅ Nenhuma rubrica inválida encontrada.'); return; }
+
+  if (totalRemovidas === 0) {
+    el.innerHTML = '<div class="alert alert-success">✅ Nenhuma rubrica inválida encontrada. Os dados estão corretos.</div>';
+    return;
+  }
+
+  let html = `<div class="alert alert-warn">🧹 <strong>${totalRemovidas}</strong> rubrica(s) inválida(s) removida(s) do banco:</div>
+    <table style="width:100%;border-collapse:collapse;font-size:.75rem;margin-top:8px">
+    <thead><tr style="background:var(--slate-dk);color:#fff">
+      <th style="padding:5px 8px;text-align:left">Competência</th>
+      <th style="padding:5px 8px;text-align:left">Funcionário</th>
+      <th style="padding:5px 8px;text-align:left">Rubrica</th>
+      <th style="padding:5px 8px;text-align:right">Qty</th>
+      <th style="padding:5px 8px;text-align:right">Valor</th>
+      <th style="padding:5px 8px;text-align:right">Sal/Dia</th>
+      <th style="padding:5px 8px;text-align:left">Motivo</th>
+    </tr></thead><tbody>`;
+
+  relatorio.forEach((r, i) => {
+    const vpd = parseBRC(r.qty) > 0 ? (r.val / parseBRC(r.qty)).toFixed(2) : '-';
+    const salDiaV = parseFloat(r.salDia);
+    let motivo = '';
+    if (salDiaV > 0 && parseFloat(vpd) > 0) {
+      const ratio = parseFloat(vpd) / salDiaV;
+      if (ratio < 0.75) motivo = `Valor/dia (${vpd}) < 75% sal/dia (${r.salDia})`;
+      else if (ratio > 1.10) motivo = `Valor/dia (${vpd}) > 110% sal/dia (${r.salDia})`;
+      else motivo = 'Sem rubrica de salário próprio';
+    } else {
+      motivo = 'Diretor/Sócio ou qty absurda';
+    }
+    html += `<tr style="background:${i%2===0?'#FFF5F5':'#fff'};border-bottom:1px solid var(--border)">
+      <td style="padding:4px 8px">${r.comp}</td>
+      <td style="padding:4px 8px;font-weight:600;color:var(--danger)">${r.nome}</td>
+      <td style="padding:4px 8px">${r.codigo} — ${r.desc}</td>
+      <td style="padding:4px 8px;text-align:right">${r.qty}</td>
+      <td style="padding:4px 8px;text-align:right">${r.val.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+      <td style="padding:4px 8px;text-align:right">${r.salDia}</td>
+      <td style="padding:4px 8px;color:var(--warn);font-size:.7rem">${motivo}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+  toast(`🧹 ${totalRemovidas} rubrica(s) removida(s)!`);
+}
+
+function inspecionarFuncionario() {
+  const nome = prompt('Nome do funcionário para inspecionar (parcial):');
+  if (!nome) return;
+  const nomeUp = nome.toUpperCase().trim();
+  const FALTA_CODES = ['8870','8792','8794','8813','246','245'];
+
+  const parseBRC = v => {
+    if (!v && v !== 0) return 0;
+    const s = String(v).trim();
+    if (!s || s === '0') return 0;
+    if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
+    return parseFloat(s) || 0;
+  };
+
+  const achados = [];
+  (DB.folhas || []).forEach(folha => {
+    (folha.funcionarios || []).forEach(f => {
+      if (!f.nome.toUpperCase().includes(nomeUp)) return;
+      const faltas = (f.rubricas_detalhe||[]).filter(r => FALTA_CODES.includes(r.code));
+      const salDia = parseBRC(f.salario) / 30;
+      achados.push({
+        comp: folha.competencia||'', emp: folha.empresaNome||'',
+        nome: f.nome, sal: parseBRC(f.salario), salDia,
+        faltas, totalRubs: (f.rubricas_detalhe||[]).length
+      });
+    });
+  });
+
+  const el = document.getElementById('inspecionar-result');
+  if (!el) return;
+
+  if (!achados.length) {
+    el.innerHTML = `<div class="alert alert-warn">Funcionário "${nome}" não encontrado nas folhas importadas.</div>`;
+    return;
+  }
+
+  let html = `<div style="margin-bottom:8px;font-weight:700;font-size:.82rem">🔍 ${achados[0].nome} — ${achados.length} competência(s)</div>`;
+  html += `<table style="width:100%;border-collapse:collapse;font-size:.75rem">
+    <thead><tr style="background:var(--slate-dk);color:#fff">
+      <th style="padding:5px 8px;text-align:left">Competência</th>
+      <th style="padding:5px 8px;text-align:right">Salário</th>
+      <th style="padding:5px 8px;text-align:right">Sal/Dia</th>
+      <th style="padding:5px 8px;text-align:center">Total Rubs</th>
+      <th style="padding:5px 8px;text-align:left">Rubricas de Falta</th>
+      <th style="padding:5px 8px;text-align:left">Válida?</th>
+    </tr></thead><tbody>`;
+
+  achados.forEach((a, i) => {
+    const faltaInfo = a.faltas.map(r => {
+      const qty = parseBRC(r.qty);
+      const vpd = qty > 0 ? r.val / qty : 0;
+      const ratio = a.salDia > 0 ? vpd / a.salDia : 0;
+      const valida = ratio >= 0.75 && ratio <= 1.10;
+      return `${r.code}(qty=${r.qty},val=${r.val},vpd=${vpd.toFixed(2)},ratio=${ratio.toFixed(2)}) <span style="color:${valida?'green':'red'}">${valida?'✓':'✗'}</span>`;
+    }).join('<br>') || '<span style="color:var(--muted)">nenhuma</span>';
+
+    const temFaltas = a.faltas.length > 0;
+    html += `<tr style="background:${temFaltas?(i%2===0?'#FFF5F5':'#fff'):(i%2===0?'var(--teal-xlt)':'#fff')};border-bottom:1px solid var(--border)">
+      <td style="padding:4px 8px">${a.comp}</td>
+      <td style="padding:4px 8px;text-align:right">${a.sal.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+      <td style="padding:4px 8px;text-align:right">${a.salDia.toFixed(2)}</td>
+      <td style="padding:4px 8px;text-align:center">${a.totalRubs}</td>
+      <td style="padding:4px 8px">${faltaInfo}</td>
+      <td style="padding:4px 8px;color:${temFaltas?'var(--danger)':'var(--success)'}">${temFaltas?'⚠️ Verificar':'✅ OK'}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
 }
 
 
