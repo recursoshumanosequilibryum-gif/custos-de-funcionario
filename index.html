@@ -1118,48 +1118,85 @@ let DB = {
 
 // Load from localStorage
 function cleanContaminatedRubricas() {
-  // Remove rubricas do Resumo por Rubrica do PDF indevidamente
-  // atribuídas ao último funcionário da folha (bug do parser)
-  const AFAS_CODES  = ['8870','8813','246','8792','8794','245'];
-  const PROV_OWN    = ['8781','8797','9380','8771','8772'];
+  // Remove rubricas de falta/afastamento indevidamente atribuídas
+  // por contaminação do Resumo por Rubrica do PDF
+  const FALTA_CODES = ['8870','8792','8794','8813','246','245'];
   let fixed = 0;
+
+  const parseBRC = v => {
+    if (!v && v !== 0) return 0;
+    const s = String(v).trim();
+    if (!s || s === '0') return 0;
+    if (s.includes(',')) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
+    return parseFloat(s) || 0;
+  };
 
   (DB.folhas || []).forEach(folha => {
     (folha.funcionarios || []).forEach(f => {
       const rubs = f.rubricas_detalhe;
       if (!rubs || !rubs.length) return;
 
+      // Calcular salário diário de referência do funcionário
+      const salMes = parseBRC(f.salario) || parseBRC(f.proventos) || 0;
+      const salDia  = salMes > 0 ? salMes / 30 : 0;
+
+      // Remover rubricas de falta que são inválidas para este funcionário:
+      // 1. Diretores/Sócios nunca têm falta
+      // 2. Valor da rubrica de falta > salário mensal completo = contaminação
+      // 3. Quantidade de dias de falta > 30 = contaminação do resumo CC
       const isDir = (f.vinculo||'').toLowerCase().includes('diretor') ||
                     (f.cargo||'').toLowerCase().includes('socio') ||
                     (f.cargo||'').toLowerCase().includes('sócio');
 
-      // Diretores/Sócios nunca têm rubricas de afastamento/falta
-      if (isDir) {
-        const before = rubs.length;
-        f.rubricas_detalhe = rubs.filter(r => !AFAS_CODES.includes(r.code));
-        if (f.rubricas_detalhe.length < before) fixed++;
-        return;
+      const antes = rubs.length;
+      f.rubricas_detalhe = rubs.filter(r => {
+        if (!FALTA_CODES.includes(r.code)) return true; // manter rubricas não relacionadas a falta
+
+        // Diretores/Sócios: remover todas as rubricas de falta
+        if (isDir) return false;
+
+        const qty = parseBRC(r.qty);
+        const val = parseBRC(r.val);
+
+        // Quantidade absurda (> 30 dias em um mês) = contaminação do resumo CC
+        if (qty > 30) return false;
+
+        // Valor maior que o salário mensal = contaminação
+        if (salMes > 0 && val > salMes) return false;
+
+        // Valor maior que 95% do salário mensal = contaminação
+        if (salMes > 0 && val > salMes * 0.95) return false;
+
+        // Valor por dia deve ser próximo ao salário diário do próprio funcionário
+        // Tolerância: 75% a 110% do salário diário (±10%)
+        // Isso detecta quando o valor diário pertence a outro funcionário (contaminação)
+        if (salDia > 0 && qty > 0) {
+          const vpd = val / qty;
+          if (vpd < salDia * 0.75 || vpd > salDia * 1.10) return false;
+        }
+
+        return true; // rubrica válida para este funcionário
+      });
+
+      // 5. Se tem rubrica de falta mas nenhuma rubrica de salário/provento = chunk contaminado
+      const SAL_CODES = ['8781','8797','9180','9382','9380','8771','8772','250','203'];
+      const temFaltaR = f.rubricas_detalhe.some(r => FALTA_CODES.includes(r.code));
+      const temSalR   = f.rubricas_detalhe.some(r => SAL_CODES.includes(r.code));
+      if (temFaltaR && !temSalR) {
+        f.rubricas_detalhe = f.rubricas_detalhe.filter(r => !FALTA_CODES.includes(r.code));
       }
 
-      // Para os demais: detectar contaminação pelo Resumo por Rubrica
-      // Sinal: rubrica 8781 (Salário) com qty > 60 dias = total da folha, não do funcionário
-      const hasBloatedSalary = rubs.some(r =>
-        r.code === '8781' && parseFloat(String(r.qty||'0').replace(',','.')) > 60
-      );
-      const hasBloated8797 = rubs.some(r =>
-        r.code === '8797' && parseFloat(String(r.qty||'0').replace(',','.')) > 60
-      );
+      if (f.rubricas_detalhe.length < antes) fixed++;
 
-      if (hasBloatedSalary || hasBloated8797) {
-        // Chunk contaminado: manter só rubricas com qty razoável
-        f.rubricas_detalhe = rubs.filter(r => {
-          const qty = parseFloat(String(r.qty||'0').replace(',','.')) || 0;
-          if (r.code === '8781' && qty > 60) return false;
-          if (r.code === '8797' && qty > 60) return false;
-          if (r.code === '8813' && qty > 30) return false;
-          if (r.code === '8870' && qty > 30) return false;
-          if (r.code === '998'  && qty > 50) return false;
-          if (r.code === '201'  && qty > 50) return false;
+      // Também limpar contaminação genérica (8781 qty > 60)
+      const hasBloated = rubs.some(r =>
+        (r.code === '8781' || r.code === '8797') &&
+        parseBRC(r.qty) > 60
+      );
+      if (hasBloated) {
+        f.rubricas_detalhe = f.rubricas_detalhe.filter(r => {
+          const qty = parseBRC(r.qty);
+          if ((r.code === '8781' || r.code === '8797') && qty > 60) return false;
           return true;
         });
         fixed++;
@@ -1169,7 +1206,7 @@ function cleanContaminatedRubricas() {
 
   if (fixed > 0) {
     saveDB();
-    console.log('[RH] Rubricas contaminadas limpas:', fixed, 'funcionário(s)');
+    console.log('[RH] Rubricas limpas:', fixed, 'funcionário(s) corrigidos');
   }
 }
 
@@ -3915,12 +3952,16 @@ function extractFuncionarios(text) {
     // qualquer linha de resumo/totais da folha inteira
     const STOP_PATTERNS = [
       /Total\s+Geral\s+Proventos/i,
-      /Resumo\s+por\s+Rubrica/i,
+      /Resumo\s+por\s+Rubrica/i,        // MATRIZ
+      /Resumo\s+por\s+Rubricas/i,       // LONGHI (com 's')
       /INSS\s+FGTS,\s+PIS/i,
       /Sistema\s+licenciado\s+para/i,
       /Salário\s+contribuição\s+empregados/i,
       /Apuração\s+Tributos\s+Federais/i,
       /Saldo\s+(à|a)\s+recolher/i,
+      /Líquido\s+Centro\s+de\s+Custo/i, // LONGHI: total do CC
+      /Total\s+Geral\s+Descontos/i,
+      /Apuração\s+de\s+Tributos/i,
     ];
 
     const lines = chunk.split('\n');
