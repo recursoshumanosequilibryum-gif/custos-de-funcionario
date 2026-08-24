@@ -1120,7 +1120,7 @@ let DB = {
 function cleanContaminatedRubricas() {
   // Remove rubricas do Resumo por Rubrica do PDF indevidamente
   // atribuídas ao último funcionário da folha (bug do parser)
-  const AFAS_CODES  = ['8870','8813','246','8792','245'];
+  const AFAS_CODES  = ['8870','8813','246','8792','8794','245'];
   const PROV_OWN    = ['8781','8797','9380','8771','8772'];
   let fixed = 0;
 
@@ -2810,9 +2810,9 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
   // -- Coletar dados de afastamento de todas as folhas --------------
   const registros = []; // {competencia, empresa, nome, cpf, cargo, vinculo, depto, tipo, dias, valor, periodo}
 
-  const CODES_DOENCA = ['8870'];  // DIAS AFAST. DOENCA C/DIR.INTEGRAIS
-  const CODES_BOLSA  = ['8813'];  // BOLSA AUX DIAS AFASTAMENTO DIREITOS INT
-  const CODES_FALTAS = ['246','8792'];  // DIAS FALTAS BOLSA AUXILIO / DIAS FALTAS (desconto)
+  const CODES_DOENCA = ['8870'];          // DIAS AFAST. DOENÇA C/DIR.INTEGRAIS
+  const CODES_BOLSA  = [];               // removido: 8813 não solicitado
+  const CODES_FALTAS = ['8792','8794'];   // DIAS FALTA / DIAS FALTA DSR
 
   folhas.sort((a,b) => (a.competencia||'').localeCompare(b.competencia||'')).forEach(folha => {
     const comp = folha.competencia || '';
@@ -2855,22 +2855,13 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
         });
       });
 
-      // Buscar 8813 - Bolsa Aux Afastamento
-      rubricas.filter(r => CODES_BOLSA.includes(r.code)).forEach(r => {
-        registros.push({
-          competencia: comp, empresa: empNome,
-          nome: f.nome, cpf: f.cpf||'', cargo: f.cargo||'',
-          vinculo: f.vinculo||'', depto: f.departamento||'',
-          tipo: 'BOLSA AUX AFASTAMENTO', codigo: '8813',
-          dias: parseFloat(String(r.qty||'0').replace(',','.')) || 0,
-          valor: r.val || 0,
-          periodo: ''
-        });
-      });
+      // 8813 não incluído conforme configuração
 
       // Buscar 246 / 8792 - Faltas
       rubricas.filter(r => CODES_FALTAS.includes(r.code)).forEach(r => {
-        const descFalta = r.code === '8792' ? 'DIAS FALTAS (8792)' : 'DIAS FALTAS BOLSA AUXILIO (246)';
+        const descFalta = r.code === '8794' ? 'DIAS FALTA DSR (8794)'
+                        : r.code === '8792' ? 'DIAS FALTA (8792)'
+                        : 'DIAS FALTAS ('+r.code+')';
         registros.push({
           competencia: comp, empresa: empNome,
           nome: f.nome, cpf: f.cpf||'', cargo: f.cargo||'',
@@ -2905,8 +2896,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
   }
 
   let totalDias8870 = 0, totalVal8870 = 0;
-  let totalDias8813 = 0, totalVal8813 = 0;
-  let totalDias246  = 0, totalVal246  = 0;
+  let totalDias246  = 0, totalVal246  = 0;  // 246=faltas(8792+8794)
 
   Object.keys(porComp).sort().forEach(comp => {
     const regs = porComp[comp];
@@ -2934,9 +2924,8 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
       totDiasComp += r.dias||0;
       totValComp  += r.valor||0;
 
-      if (r.codigo === '8870')                          { totalDias8870 += r.dias||0; totalVal8870 += r.valor||0; }
-      else if (r.codigo === '8813')                     { totalDias8813 += r.dias||0; totalVal8813 += r.valor||0; }
-      else if (r.codigo === '246' || r.codigo === '8792'){ totalDias246  += r.dias||0; totalVal246  += r.valor||0; }
+      if (r.codigo === '8870')                                          { totalDias8870 += r.dias||0; totalVal8870 += r.valor||0; }
+      else if (r.codigo === '8792' || r.codigo === '8794')              { totalDias246  += r.dias||0; totalVal246  += r.valor||0; }
     });
 
     // Subtotal competência
@@ -2947,8 +2936,8 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
   // Total geral
   R1([], 'space');
   R1(['','TOTAL GERAL','','','','','','',
-    (totalDias8870+totalDias8813+totalDias246)||null,
-    (totalVal8870+totalVal8813+totalVal246)||null
+    (totalDias8870+totalDias246)||null,
+    (totalVal8870+totalVal246)||null
   ], 'grandtotal');
 
   const ws1 = XLSX.utils.aoa_to_sheet(rows1);
@@ -3105,8 +3094,7 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
   R3([], 'space');
   R3(['COMPETÊNCIA',
       'AFAST. DOENÇA (8870)\nQtd. Func.','DIAS','VALOR (R$)',
-      'BOLSA AUX AFAST. (8813)\nQtd. Func.','DIAS','VALOR (R$)',
-      'DIAS FALTAS (246)\nQtd. Func.','DIAS','VALOR (R$)',
+      'DIAS FALTA (8792/8794)\nQtd. Func.','DIAS','VALOR (R$)',
       'TOTAL DIAS','TOTAL (R$)'], 'header');
 
   const porMes = {};
@@ -3116,54 +3104,51 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
       b:{funcs:new Set(),dias:0,val:0},
       f:{funcs:new Set(),dias:0,val:0}
     };
-    const k = r.codigo==='8870' ? 'd' : (r.codigo==='246'||r.codigo==='8792') ? 'f' : 'b';
+    const k = r.codigo==='8870' ? 'd' : (r.codigo==='8792'||r.codigo==='8794') ? 'f' : null;
+    if (!k) return;
     porMes[r.competencia][k].funcs.add(r.nome);
     porMes[r.competencia][k].dias += r.dias||0;
     porMes[r.competencia][k].val  += r.valor||0;
   });
 
-  let gt3 = {df:new Set(),dd:0,dv:0, bf:new Set(),bd:0,bv:0, ff:new Set(),fd:0,fv:0};
+  let gt3 = {df:new Set(),dd:0,dv:0, ff:new Set(),fd:0,fv:0};
   Object.keys(porMes).sort().forEach((comp,mi) => {
     const [ano, mes] = comp.split('-');
     const mesNome = (mesesNomes3[(parseInt(mes)||1)-1]||'')+'/'+ano;
     const pm = porMes[comp];
     const totD = pm.d.dias + pm.b.dias;
     const totV = pm.d.val  + pm.b.val;
-    const totD3 = pm.d.dias + pm.b.dias + pm.f.dias;
-    const totV3 = pm.d.val  + pm.b.val  + pm.f.val;
+    const totD3 = pm.d.dias + pm.f.dias;
+    const totV3 = pm.d.val  + pm.f.val;
     R3([
       mesNome,
       pm.d.funcs.size||null, pm.d.dias||null, pm.d.val||null,
-      pm.b.funcs.size||null, pm.b.dias||null, pm.b.val||null,
       pm.f.funcs.size||null, pm.f.dias||null, pm.f.val||null,
       totD3||null, totV3||null
     ], mi%2===0?'even':'odd');
     pm.d.funcs.forEach(n=>gt3.df.add(n)); gt3.dd+=pm.d.dias; gt3.dv+=pm.d.val;
-    pm.b.funcs.forEach(n=>gt3.bf.add(n)); gt3.bd+=pm.b.dias; gt3.bv+=pm.b.val;
     pm.f.funcs.forEach(n=>gt3.ff.add(n)); gt3.fd+=pm.f.dias; gt3.fv+=pm.f.val;
   });
 
   R3([], 'space');
   R3(['TOTAL GERAL',
       gt3.df.size||null, gt3.dd||null, gt3.dv||null,
-      gt3.bf.size||null, gt3.bd||null, gt3.bv||null,
       gt3.ff.size||null, gt3.fd||null, gt3.fv||null,
-      (gt3.dd+gt3.bd+gt3.fd)||null,
-      (gt3.dv+gt3.bv+gt3.fv)||null], 'grandtotal');
+      (gt3.dd+gt3.fd)||null,
+      (gt3.dv+gt3.fv)||null], 'grandtotal');
 
   const ws3 = XLSX.utils.aoa_to_sheet(rows3);
-  ws3['!cols'] = [{wch:14},{wch:10},{wch:8},{wch:13},{wch:10},{wch:8},{wch:13},{wch:10},{wch:8},{wch:13},{wch:10},{wch:13}];
+  ws3['!cols'] = [{wch:14},{wch:10},{wch:8},{wch:13},{wch:10},{wch:8},{wch:13},{wch:10},{wch:13}];
   ws3['!rows'] = rows3.map((_,i) => {
     const m = meta3[i];
     return m==='title'?{hpt:28}:m==='subtitle'?{hpt:16}:m==='header'?{hpt:32}:
            m==='grandtotal'?{hpt:22}:m==='space'?{hpt:5}:{hpt:15};
   });
   ws3['!merges'] = [
-    {s:{r:0,c:0},e:{r:0,c:11}},{s:{r:1,c:0},e:{r:1,c:11}},
+    {s:{r:0,c:0},e:{r:0,c:8}},{s:{r:1,c:0},e:{r:1,c:8}},
     {s:{r:3,c:1},e:{r:3,c:3}},
     {s:{r:3,c:4},e:{r:3,c:6}},
-    {s:{r:3,c:7},e:{r:3,c:9}},
-    {s:{r:3,c:10},e:{r:3,c:11}},
+    {s:{r:3,c:7},e:{r:3,c:8}},
   ];
   rows3.forEach((_,ri) => {
     if (meta3[ri]==='grandtotal') ws3['!merges'].push({s:{r:ri,c:0},e:{r:ri,c:0}});
@@ -3177,10 +3162,10 @@ function buildAfastamentosSheet(wb, folhas, empresa, periodoDE, periodoATE) {
       if (!ws3[addr]) ws3[addr] = {t:'s', v:''};
       const cell = ws3[addr]; const val = cell.v;
       const isDoencaBlock = ci>=1 && ci<=3;
-      const isBolsaBlock  = ci>=4 && ci<=6;
-      const isFaltaBlock  = ci>=7 && ci<=9;
-      const isTotalBlock  = ci>=10;
-      const isVal = ci===3||ci===6||ci===9||ci===11;
+      const isFaltaBlock  = ci>=4 && ci<=6;
+      const isTotalBlock  = ci>=7;
+      const isBolsaBlock  = false;
+      const isVal = ci===3||ci===6||ci===8;
 
       if (m==='title') { cell.s = sty(true, C.TEAL_DK, 'FFFFFF', 'left', 14); }
       else if (m==='subtitle') { cell.s = sty(false, C.TEAL_LT, C.TEAL_DK, 'left', 9); }
@@ -4695,13 +4680,9 @@ function renderIndicadores() {
           m.detalheAfast.push({ nome:f.nome, cpf:f.cpf||'', depto:f.departamento||'', tipo:'Afast. Doença', codigo:'8870', dias, val });
         }
         // 8813 - Bolsa Aux Afastamento (não se aplica a Diretores)
-        if (r.code === '8813' && !isDirFunc) {
-          m.diasAfast8813 += dias; m.valAfast8813 += val;
-          m.funcsAfast8813.add(f.nome);
-          m.detalheAfast.push({ nome:f.nome, cpf:f.cpf||'', depto:f.departamento||'', tipo:'Bolsa Aux Afast.', codigo:'8813', dias, val });
-        }
+        // 8813 não incluído conforme configuração
         // 246, 8792 - Faltas (não se aplica a Diretores)
-        if ((r.code === '246' || r.code === '8792') && !isDirFunc) {
+        if ((r.code === '8792' || r.code === '8794') && !isDirFunc) {
           m.diasFaltas += dias; m.valFaltas += val;
           m.funcsFaltas.add(f.nome);
           m.detalheAfast.push({ nome:f.nome, cpf:f.cpf||'', depto:f.departamento||'', tipo:'Dias Faltas', codigo:r.code, dias, val });
@@ -4900,7 +4881,7 @@ function exportarIndicadores() {
         const dias = fmtHQty(r.qty), val = r.val||0;
         if (r.code==='8870')            { m.diasAfast8870+=dias;m.valAfast8870+=val;m.funcsAfast8870.add(f.nome);m.detalheAfast.push({nome:f.nome,cpf:f.cpf||'',depto:f.departamento||'',tipo:'Afast. Doença',codigo:'8870',dias,val}); }
         if (r.code==='8813')            { m.diasAfast8813+=dias;m.valAfast8813+=val;m.funcsAfast8813.add(f.nome);m.detalheAfast.push({nome:f.nome,cpf:f.cpf||'',depto:f.departamento||'',tipo:'Bolsa Aux Afast.',codigo:'8813',dias,val}); }
-        if (r.code==='246'||r.code==='8792') { m.diasFaltas+=dias;m.valFaltas+=val;m.funcsFaltas.add(f.nome);m.detalheAfast.push({nome:f.nome,cpf:f.cpf||'',depto:f.departamento||'',tipo:'Dias Faltas',codigo:r.code,dias,val}); }
+        if (r.code==='8792'||r.code==='8794') { m.diasFaltas+=dias;m.valFaltas+=val;m.funcsFaltas.add(f.nome);m.detalheAfast.push({nome:f.nome,cpf:f.cpf||'',depto:f.departamento||'',tipo:'Dias Faltas',codigo:r.code,dias,val}); }
         if (r.code==='211'||r.code==='209') { m.heTotal+=dias;m.valHE+=val;m.funcsHE.add(f.nome); }
       });
     });
