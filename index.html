@@ -883,6 +883,7 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-warn btn-sm" onclick="forcarLimpezaRubricas()">🧹 Limpar Rubricas Inválidas</button>
           <button class="btn btn-secondary btn-sm" onclick="inspecionarFuncionario()">🔍 Inspecionar Funcionário</button>
+          <button class="btn btn-danger btn-sm" onclick="removerFaltasFuncionario()">❌ Remover Faltas de Funcionário</button>
         </div>
         <div id="inspecionar-result" style="margin-top:10px"></div>
         </div>
@@ -7113,6 +7114,50 @@ function inspecionarFuncionario() {
   el.innerHTML = html;
 }
 
+
+function removerFaltasFuncionario() {
+  const nome = prompt('Nome do funcionário (parcial) para remover TODAS as rubricas de falta/afastamento:');
+  if (!nome) return;
+  const nomeUp = nome.toUpperCase().trim();
+  const FALTA_CODES = ['8870','8792','8794','8813','246','245','8797'];
+
+  let totalFolhas = 0, totalRemovidass = 0;
+
+  (DB.folhas || []).forEach(folha => {
+    (folha.funcionarios || []).forEach(f => {
+      if (!f.nome.toUpperCase().includes(nomeUp)) return;
+      const antes = (f.rubricas_detalhe || []).filter(r => FALTA_CODES.includes(r.code)).length;
+      if (antes === 0) return;
+      f.rubricas_detalhe = (f.rubricas_detalhe || []).filter(r => !FALTA_CODES.includes(r.code));
+      totalRemovidass += antes;
+      totalFolhas++;
+    });
+  });
+
+  // Também limpar no cadastro de funcionários
+  (DB.funcionarios || []).forEach(f => {
+    if (!f.nome.toUpperCase().includes(nomeUp)) return;
+    if (!f.rubricas_detalhe) return;
+    const antes = f.rubricas_detalhe.filter(r => FALTA_CODES.includes(r.code)).length;
+    if (antes === 0) return;
+    f.rubricas_detalhe = f.rubricas_detalhe.filter(r => !FALTA_CODES.includes(r.code));
+    totalRemovidass += antes;
+  });
+
+  if (totalRemovidass === 0) {
+    const el = document.getElementById('inspecionar-result');
+    if (el) el.innerHTML = `<div class="alert alert-info">ℹ️ Nenhuma rubrica de falta encontrada para funcionários com "${nome}" no nome.</div>`;
+    return;
+  }
+
+  saveDB();
+
+  const el = document.getElementById('inspecionar-result');
+  if (el) {
+    el.innerHTML = `<div class="alert alert-success">✅ <strong>${totalRemovidass}</strong> rubrica(s) de falta/afastamento removida(s) de <strong>"${nome}"</strong> em <strong>${totalFolhas}</strong> competência(s). Banco de dados atualizado.</div>`;
+  }
+  toast(`✅ ${totalRemovidass} rubrica(s) removida(s) de "${nome}"!`);
+}
 
 // BACKUP
 // ═══════════════════════════════════════════════════════
