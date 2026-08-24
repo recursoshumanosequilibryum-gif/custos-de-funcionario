@@ -4741,8 +4741,11 @@ function renderIndicadores() {
         if (r.code === '245') {
           m.diasAtraso += dias; m.valAtraso += val;
         }
-        // 211, 209 - Horas Extras
-        if (r.code === '211' || r.code === '209') {
+        // Horas Extras — detectar por código OU descrição
+        const descUpper = (r.desc||'').toUpperCase();
+        const isHE = ['209','210','211','212','213','714','715','716'].includes(r.code) ||
+                     /HORA\s*EXTRA|H\.?\s*E\.?\s*\d|ADICIONAL.*HORA|EXTRA.*\d{2}%/.test(descUpper);
+        if (isHE && r.tipo === 'P') {
           m.heTotal += dias; m.valHE += val;
           m.funcsHE.add(f.nome);
         }
@@ -4788,8 +4791,8 @@ function renderIndicadores() {
     </div>
     <div style="${cardStyle('#2B6CB0')}">
       <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">⏰ Horas Extras</div>
-      <div style="font-size:2rem;font-weight:800;color:#2B6CB0">${fmtH(gt.heTotal)}</div>
-      <div style="font-size:.75rem;color:var(--muted);margin-top:4px">${fmtBRL(gt.valHE)}</div>
+      <div style="font-size:1.6rem;font-weight:800;color:#2B6CB0">${gt.heTotal > 0 ? gt.heTotal.toFixed(1) + ' h' : '—'}</div>
+      <div style="font-size:.75rem;color:var(--muted);margin-top:4px">${gt.valHE > 0 ? fmtBRL(gt.valHE) + ' pago' : 'sem HE no período'}</div>
     </div>
   `;
 
@@ -4833,15 +4836,39 @@ function renderIndicadores() {
   // -- Horas Extras mensal ---------------------------
   const heRows = dados.map(d => [
     mesLabel(d.comp),
-    d.totalFunc,
     d.funcsHE.size || '-',
-    d.heTotal > 0 ? fmtH(d.heTotal) : '-',
-    d.valHE > 0 ? fmtBRL(d.valHE) : '-',
-    d.totalFunc > 0 && d.heTotal > 0 ? fmtH(d.heTotal/d.totalFunc) : '-'
+    d.heTotal > 0 ? d.heTotal.toFixed(1) + ' h' : '-',
+    d.valHE > 0 ? fmtBRL(d.valHE) : '-'
   ]);
-  document.getElementById('ind-he-mensal').innerHTML = miniTable([
-    {label:'Mês'},{label:'Total Func.'},{label:'Func. c/ HE'},{label:'Total HH',right:true},{label:'Valor HE',right:true},{label:'HH/Func.',right:true}
-  ], heRows, 'Nenhuma hora extra registrada.');
+  const heEmpty = !dados.some(d => d.heTotal > 0);
+  const heTotalGeral  = dados.reduce((s,d) => s + d.heTotal, 0);
+  const heValorGeral  = dados.reduce((s,d) => s + d.valHE, 0);
+  const heFuncsGeral  = new Set(dados.flatMap(d => [...d.funcsHE])).size;
+
+  const heHtml = heEmpty
+    ? '<div style="text-align:center;padding:32px;color:var(--muted);font-size:.85rem">Nenhuma hora extra encontrada no período.<br><span style="font-size:.75rem">Verifique se os códigos de HE estão nas folhas importadas.</span></div>'
+    : `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+        <div style="background:linear-gradient(135deg,#2B6CB0,#3182CE);border-radius:10px;padding:16px;color:#fff;text-align:center">
+          <div style="font-size:1.8rem;font-weight:800">${heTotalGeral.toFixed(1)}h</div>
+          <div style="font-size:.72rem;opacity:.85;margin-top:3px">TOTAL HORAS EXTRAS</div>
+        </div>
+        <div style="background:linear-gradient(135deg,#276749,#38A169);border-radius:10px;padding:16px;color:#fff;text-align:center">
+          <div style="font-size:1.8rem;font-weight:800">${fmtBRL(heValorGeral)}</div>
+          <div style="font-size:.72rem;opacity:.85;margin-top:3px">VALOR TOTAL PAGO</div>
+        </div>
+        <div style="background:linear-gradient(135deg,#744210,#c05621);border-radius:10px;padding:16px;color:#fff;text-align:center">
+          <div style="font-size:1.8rem;font-weight:800">${heFuncsGeral}</div>
+          <div style="font-size:.72rem;opacity:.85;margin-top:3px">FUNC. COM HE</div>
+        </div>
+      </div>
+      ${miniTable([
+        {label:'Mês',right:false},
+        {label:'Func. c/ HE',right:true},
+        {label:'Total Horas',right:true},
+        {label:'Valor Pago (R$)',right:true}
+      ], heRows, '')}`;
+
+  document.getElementById('ind-he-mensal').innerHTML = heHtml;
 
   // -- Admissões mensal ------------------------------
   const admRows = dados.filter(d=>d.admissoes>0).map(d => {
@@ -4932,7 +4959,9 @@ function exportarIndicadores() {
         if (r.code==='8870')            { m.diasAfast8870+=dias;m.valAfast8870+=val;m.funcsAfast8870.add(f.nome);m.detalheAfast.push({nome:f.nome,cpf:f.cpf||'',depto:f.departamento||'',tipo:'Afast. Doença',codigo:'8870',dias,val}); }
         if (r.code==='8813')            { m.diasAfast8813+=dias;m.valAfast8813+=val;m.funcsAfast8813.add(f.nome);m.detalheAfast.push({nome:f.nome,cpf:f.cpf||'',depto:f.departamento||'',tipo:'Bolsa Aux Afast.',codigo:'8813',dias,val}); }
         if (r.code==='8792'||r.code==='8794') { m.diasFaltas+=dias;m.valFaltas+=val;m.funcsFaltas.add(f.nome);m.detalheAfast.push({nome:f.nome,cpf:f.cpf||'',depto:f.departamento||'',tipo:'Dias Faltas',codigo:r.code,dias,val}); }
-        if (r.code==='211'||r.code==='209') { m.heTotal+=dias;m.valHE+=val;m.funcsHE.add(f.nome); }
+        const descU2=(r.desc||'').toUpperCase();
+        const isHE2=['209','210','211','212','213','714','715','716'].includes(r.code)||/HORA\s*EXTRA|H\.?\s*E\.?\s*\d|ADICIONAL.*HORA|EXTRA.*\d{2}%/.test(descU2);
+        if(isHE2&&r.tipo==='P'){m.heTotal+=dias;m.valHE+=val;m.funcsHE.add(f.nome);}
       });
     });
   });
